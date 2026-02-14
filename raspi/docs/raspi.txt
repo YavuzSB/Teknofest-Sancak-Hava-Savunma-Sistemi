@@ -1,0 +1,19 @@
+baglanma: ssh pi@10.42.0.160
+
+
+dosya gonderme: scp -r * pi@10.42.0.160:~/
+
+Ileri: GPIO 17 (Pin 11)
+
+Geri: GPIO 27 (Pin 13)
+
+Sol: GPIO 22 (Pin 15)
+
+Sag: GPIO 23 (Pin 16)
+
+Ates: GPIO 26 (Pin 37)
+
+Mod Anahtari: GPIO 21 (Pin 40)
+
+Not: Kodda pull_up_down=GPIO.PUD_UP kullandigin icin butonlarin bir bacagini GPIO'ya,
+diger bacagini dogrudan GND (Toprak) hattina baglaman yeterli. Direnc kullanmana gerek yok.

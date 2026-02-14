@@ -1,0 +1,14 @@
+GPIO 17: Ileri Butonu
+
+GPIO 27: Geri Butonu
+
+GPIO 22: Sol Butonu
+
+GPIO 23: Sag Butonu
+
+GPIO 24: Ates Butonu
+
+GPIO 25: Mod Anahtari (Switch)
+
+Not: Kodda pull_up_down=GPIO.PUD_UP kullandigin icin butonlarin bir bacagini GPIO'ya,
+diger bacagini dogrudan GND (Toprak) hattina baglaman yeterli. Direnc kullanmana gerek yok.

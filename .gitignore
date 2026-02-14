@@ -1,0 +1,37 @@
+# Build ve derleme dosyaları
+build/
+build-mingw/
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.a
+*.lib
+*.pyc
+__pycache__/
+CMakeFiles/
+CMakeCache.txt
+Makefile
+cmake_install.cmake
+*.log
+*.tmp
+*.swp
+# VS Code
+.vscode/
+# Docker
+*.img
+*.container
+# Test çıktıları
+*.test
+# Kişisel dosyalar
+*.bak
+*.old
+# Sistem dosyaları
+.DS_Store
+Thumbs.db
+# Python
+.env
+venv/
+# Sürüm dosyası hariç
+!VERSION

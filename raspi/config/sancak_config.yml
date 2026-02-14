@@ -1,0 +1,109 @@
+%YAML:1.0
+---
+# ============================================================================
+# SANCAK HAVA SAVUNMA SİSTEMİ - VARSAYILAN KONFİGÜRASYON
+# ============================================================================
+# Bu dosya OpenCV FileStorage formatındadır (.yml)
+# Çalışma zamanında --config parametresi ile özel dosya yüklenebilir.
+# ============================================================================
+
+# --- KAMERA AYARLARI ---
+camera:
+   device_index:    0
+   frame_width:     640
+   frame_height:    480
+   fps_target:      30
+
+# --- YOLO26-NANO MODEL AYARLARI ---
+yolo:
+   model_path:      "models/best.onnx"
+   input_size:      640
+   conf_threshold:  4.5000000000000001e-01
+   nms_threshold:   5.0000000000000000e-01
+   use_cuda:        0
+   class_names:
+      - "drone"
+      - "plane"
+      - "helicopter"
+      - "jet"
+      - "rocket"
+      - "friendly"
+
+# --- BALON SEGMENTASYON AYARLARI (Turuncu HSV) ---
+balloon:
+   h_min: 5
+   h_max: 25
+   s_min: 100
+   s_max: 255
+   v_min: 100
+   v_max: 255
+   min_radius_px:   8.
+   max_radius_px:   200.
+   min_circularity: 5.5000000000000004e-01
+
+# --- MESAFE TAHMİN AYARLARI ---
+distance:
+   known_balloon_diameter_m: 1.2000000476837158e-01
+   focal_length_px:          600.
+   min_distance_m:           3.
+   max_distance_m:           20.
+
+# --- BALİSTİK DÜZELTME AYARLARI ---
+ballistics:
+   # Kamera-namlu fiziksel offset (metre)
+   camera_barrel_offset_x_m: 0.
+   camera_barrel_offset_y_m: 5.0000000000000003e-02
+
+   # Namlu çıkış hızı (m/s)
+   muzzle_velocity_mps: 90.
+
+   # Sıfırlama mesafesi (m) - paralaks bu mesafede sıfır kabul edilir
+   zeroing_distance_m: 10.
+
+   # Manuel nişan offset (piksel) - sahada kalibre edilir
+   manual_offset_x_px: 0.
+   manual_offset_y_px: 0.
+
+   # Saha test tablosu: [mesafe(m), dikey_offset(px), yatay_offset(px)]
+   # Her mesafe için test atışlarından elde edilen değerler girilir.
+   # Ara mesafeler doğrusal interpolasyon ile hesaplanır.
+   lookup_table:
+      -
+         distance_m:  5.
+         y_offset_px: 15.
+         x_offset_px: 0.
+      -
+         distance_m:  7.5
+         y_offset_px: 10.
+         x_offset_px: 0.
+      -
+         distance_m:  10.
+         y_offset_px: 6.
+         x_offset_px: 0.
+      -
+         distance_m:  12.5
+         y_offset_px: 3.
+         x_offset_px: 0.
+      -
+         distance_m:  15.
+         y_offset_px: 1.
+         x_offset_px: 0.
+
+# --- TAKİP AYARLARI ---
+tracking:
+   iou_threshold:      3.0000000000000000e-01
+   max_lost_frames:    15
+   min_confirm_frames: 3
+   velocity_smoothing: 7.0000000000000000e-01
+
+# --- SERİ PORT AYARLARI ---
+serial:
+   port:       "/dev/ttyUSB0"
+   baud_rate:  115200
+   timeout_ms: 100
+   enabled:    1
+
+# --- GENEL ---
+headless:   1
+autonomous: 0
+log_level:  "info"

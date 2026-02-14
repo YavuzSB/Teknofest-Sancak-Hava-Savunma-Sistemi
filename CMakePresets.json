@@ -1,0 +1,112 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 21,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "linux-release",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "SANCAK_ENABLE_TESTS": "ON",
+        "SANCAK_ENABLE_CLANG_TIDY": "OFF"
+      }
+    },
+    {
+      "name": "linux-ci",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "SANCAK_ENABLE_TESTS": "ON",
+        "SANCAK_ENABLE_CLANG_TIDY": "ON",
+        "SANCAK_CLANG_TIDY_WARNINGS_AS_ERRORS": "ON"
+      }
+    },
+    {
+      "name": "windows-msvc",
+      "inherits": "base",
+      "generator": "Ninja Multi-Config",
+      "cacheVariables": {
+        "SANCAK_ENABLE_TESTS": "ON",
+        "SANCAK_ENABLE_CLANG_TIDY": "OFF"
+      }
+    },
+    {
+      "name": "windows-msys2-ucrt64",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "SANCAK_ENABLE_TESTS": "ON",
+        "SANCAK_ENABLE_CLANG_TIDY": "OFF",
+        "CMAKE_C_COMPILER": "C:/msys64/ucrt64/bin/gcc.exe",
+        "CMAKE_CXX_COMPILER": "C:/msys64/ucrt64/bin/g++.exe",
+        "CMAKE_PREFIX_PATH": "C:/msys64/ucrt64"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "linux-release",
+      "configurePreset": "linux-release",
+      "jobs": 0
+    },
+    {
+      "name": "linux-ci",
+      "configurePreset": "linux-ci",
+      "jobs": 0
+    },
+    {
+      "name": "windows-msvc-debug",
+      "configurePreset": "windows-msvc",
+      "configuration": "Debug",
+      "jobs": 0
+    },
+    {
+      "name": "windows-msvc-release",
+      "configurePreset": "windows-msvc",
+      "configuration": "Release",
+      "jobs": 0
+    },
+    {
+      "name": "windows-msys2-ucrt64",
+      "configurePreset": "windows-msys2-ucrt64",
+      "jobs": 0
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "linux-release",
+      "configurePreset": "linux-release",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "linux-ci",
+      "configurePreset": "linux-ci",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "windows-msvc-debug",
+      "configurePreset": "windows-msvc",
+      "configuration": "Debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}

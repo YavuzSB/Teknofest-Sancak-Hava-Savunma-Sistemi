@@ -1,0 +1,39 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake git pkg-config ninja-build \
+            libopencv-dev \
+            clang-format clang-tidy
+
+      - name: Configure
+        run: |
+          cmake --preset linux-ci
+
+      - name: Build
+        run: |
+          cmake --build --preset linux-ci
+
+      - name: Test
+        run: |
+          ctest --preset linux-ci
+
+      - name: clang-format (check)
+        run: |
+          files=$(find raspi -type f \( -name '*.cpp' -o -name '*.hpp' -o -name '*.h' \))
+          clang-format --dry-run --Werror $files
+
+      # clang-tidy target-bazli olarak build sirasinda enforced ediliyor.
