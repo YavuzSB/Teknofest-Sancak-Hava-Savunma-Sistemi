@@ -29,7 +29,15 @@ ArduinoController::~ArduinoController() {
 }
 
 bool ArduinoController::open() {
-    // TODO: Win32 CreateFile ile seri port aç
+    if (m_impl->m_isOpen) {
+        return true;
+    }
+
+    if (m_impl->m_port.empty()) {
+        return false;
+    }
+
+    // TODO: Win32 CreateFile ile seri port açılınca bu stub güncellenecek.
     m_impl->m_isOpen = true;
     return true;
 }

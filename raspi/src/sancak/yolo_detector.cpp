@@ -54,8 +54,8 @@ cv::Mat YoloDetector::letterbox(const cv::Mat& src, cv::Point2f& scale, cv::Poin
     int new_w = static_cast<int>(std::round(static_cast<float>(in_w) * r));
     int new_h = static_cast<int>(std::round(static_cast<float>(in_h) * r));
 
-    float dw = static_cast<float>(tgt - new_w) / 2.0f;
-    float dh = static_cast<float>(tgt - new_h) / 2.0f;
+    float dw = static_cast<float>(tgt - new_w) / 2.0F;
+    float dh = static_cast<float>(tgt - new_h) / 2.0F;
 
     cv::Mat resized;
     cv::resize(src, resized, cv::Size(new_w, new_h), 0, 0, cv::INTER_LINEAR);
@@ -70,7 +70,7 @@ cv::Mat YoloDetector::letterbox(const cv::Mat& src, cv::Point2f& scale, cv::Poin
 }
 
 std::vector<Detection> YoloDetector::detect(const cv::Mat& frame) {
-    if (!ready_ || frame.empty()) return {};
+    if (!ready_ || frame.empty()) { return {}; }
 
     auto t0 = SteadyClock::now();
 
@@ -92,7 +92,7 @@ std::vector<Detection> YoloDetector::detect(const cv::Mat& frame) {
     last_inference_ms_ = std::chrono::duration<double, std::milli>(t1 - t0).count();
 
     // 4. Parse + NMS
-    if (outputs.empty()) return {};
+    if (outputs.empty()) { return {}; }
 
     return parseOutput(outputs[0], scale, pad, frame.cols, frame.rows);
 }
@@ -138,7 +138,7 @@ std::vector<Detection> YoloDetector::parseOutput(const cv::Mat& output,
             }
         }
 
-        if (max_score < config_.conf_threshold) continue;
+        if (max_score < config_.conf_threshold) { continue; }
 
         // cx, cy, w, h → x1, y1, x2, y2 (letterbox koordinatları)
         float cx = row[0];
@@ -146,8 +146,8 @@ std::vector<Detection> YoloDetector::parseOutput(const cv::Mat& output,
         float w  = row[2];
         float h  = row[3];
 
-        float x1 = cx - w / 2.0f;
-        float y1 = cy - h / 2.0f;
+        float x1 = cx - w / 2.0F;
+        float y1 = cy - h / 2.0F;
 
         // Letterbox → orijinal frame koordinatlarına
         x1 = (x1 - pad.x) / scale.x;
@@ -156,8 +156,8 @@ std::vector<Detection> YoloDetector::parseOutput(const cv::Mat& output,
         h  = h / scale.y;
 
         // Sınır kontrolü
-        x1 = std::max(0.0f, x1);
-        y1 = std::max(0.0f, y1);
+        x1 = std::max(0.0F, x1);
+        y1 = std::max(0.0F, y1);
         if (x1 + w > static_cast<float>(orig_w)) w = static_cast<float>(orig_w) - x1;
         if (y1 + h > static_cast<float>(orig_h)) h = static_cast<float>(orig_h) - y1;
 

@@ -35,7 +35,7 @@ AimPoint AimSolver::solve(const BalloonResult& balloon,
     auto dist = distance_.combined(
         balloon.radius,
         detection.bbox.height,
-        0.25f  // ortalama hedef yüksekliği ~25cm
+        0.25F  // ortalama hedef yüksekliği ~25cm
     );
     aim.distance_m = dist.distance_m;
 
@@ -62,10 +62,10 @@ AimPoint AimSolver::solve(const BalloonResult& balloon,
 }
 
 cv::Point2f AimSolver::clampToFrame(const cv::Point2f& pt,
-                                      const cv::Size& frame_size) const {
+                                      const cv::Size& frame_size) {
     return cv::Point2f(
-        std::clamp(pt.x, 0.0f, static_cast<float>(frame_size.width  - 1)),
-        std::clamp(pt.y, 0.0f, static_cast<float>(frame_size.height - 1))
+        std::clamp(pt.x, 0.0F, static_cast<float>(frame_size.width  - 1)),
+        std::clamp(pt.y, 0.0F, static_cast<float>(frame_size.height - 1))
     );
 }
 

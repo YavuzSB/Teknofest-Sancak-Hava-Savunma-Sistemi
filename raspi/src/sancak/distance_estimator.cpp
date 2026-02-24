@@ -21,9 +21,9 @@ void DistanceEstimator::initialize(const DistanceConfig& config) {
 DistanceEstimate DistanceEstimator::fromBalloonRadius(float balloon_radius_px) const {
     DistanceEstimate est;
 
-    if (balloon_radius_px <= 0.0f) return est;
+    if (balloon_radius_px <= 0.0F) { return est; }
 
-    float diameter_px = balloon_radius_px * 2.0f;
+    float diameter_px = balloon_radius_px * 2.0F;
 
     // D = (gerçek_çap × odak) / piksel_çap
     est.distance_m = (config_.known_balloon_diameter_m * config_.focal_length_px) / diameter_px;
@@ -32,7 +32,7 @@ DistanceEstimate DistanceEstimator::fromBalloonRadius(float balloon_radius_px) c
     est.distance_m = std::clamp(est.distance_m, config_.min_distance_m, config_.max_distance_m);
 
     // Güven: yarıçap ne kadar büyükse o kadar güvenilir
-    est.confidence = std::min(1.0f, balloon_radius_px / 50.0f);
+    est.confidence = std::min(1.0F, balloon_radius_px / 50.0F);
 
     return est;
 }
@@ -41,11 +41,11 @@ DistanceEstimate DistanceEstimator::fromBboxHeight(float bbox_height_px,
                                                      float real_height_m) const {
     DistanceEstimate est;
 
-    if (bbox_height_px <= 0.0f || real_height_m <= 0.0f) return est;
+    if (bbox_height_px <= 0.0F || real_height_m <= 0.0F) { return est; }
 
     est.distance_m = (real_height_m * config_.focal_length_px) / bbox_height_px;
     est.distance_m = std::clamp(est.distance_m, config_.min_distance_m, config_.max_distance_m);
-    est.confidence = std::min(1.0f, bbox_height_px / 100.0f);
+    est.confidence = std::min(1.0F, bbox_height_px / 100.0F);
 
     return est;
 }
@@ -63,11 +63,12 @@ DistanceEstimate DistanceEstimator::combined(float balloon_radius_px,
         float total = e1.confidence + e2.confidence;
         combined.distance_m = (e1.distance_m * e1.confidence +
                                e2.distance_m * e2.confidence) / total;
-        combined.confidence = (e1.confidence + e2.confidence) / 2.0f;
+        combined.confidence = (e1.confidence + e2.confidence) / 2.0F;
     } else if (e1.confidence > 0) {
         combined = e1;
     } else {
         combined = e2;
+    }
     }
 
     return combined;

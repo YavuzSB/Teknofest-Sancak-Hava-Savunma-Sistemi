@@ -14,6 +14,55 @@
 #include <opencv2/highgui.hpp>
 #include <csignal>
 #include <atomic>
+#include <algorithm>
+#include <cmath>
+
+namespace {
+    static sancak::core::TargetClass toCoreTargetClass(sancak::TargetClass cls) {
+        using S = sancak::TargetClass;
+        using C = sancak::core::TargetClass;
+        switch (cls) {
+            case S::kDrone:      return C::Drone;
+            case S::kHelicopter: return C::Helicopter;
+            case S::kRocket:     return C::Missile;
+            case S::kJet:        return C::F16;
+            case S::kPlane:      return C::F16; // pratikte "uçak" sınıfını F16 kuralına mapliyoruz
+            default:             return C::Unknown;
+        }
+    }
+
+    static sancak::core::Affiliation toCoreAffiliation(sancak::Affiliation a) {
+        switch (a) {
+            case sancak::Affiliation::Friend:  return sancak::core::Affiliation::Friend;
+            case sancak::Affiliation::Foe:     return sancak::core::Affiliation::Foe;
+            default:                           return sancak::core::Affiliation::Unknown;
+        }
+    }
+
+    static sancak::PipelineState toPipelineState(sancak::core::CombatState s) {
+        using CS = sancak::core::CombatState;
+        switch (s) {
+            case CS::Idle:      return sancak::PipelineState::kIdle;
+            case CS::Searching: return sancak::PipelineState::kDetecting;
+            case CS::Tracking:  return sancak::PipelineState::kTracking;
+            case CS::Engaging:  return sancak::PipelineState::kEngaging;
+            case CS::SafeLock:  return sancak::PipelineState::kIdle;
+            default:            return sancak::PipelineState::kIdle;
+        }
+    }
+
+    static bool isInsideGeofence(const sancak::GeofenceConfig& g, float pan_deg, float tilt_deg) {
+        return pan_deg >= g.pan_min_deg && pan_deg <= g.pan_max_deg &&
+               tilt_deg >= g.tilt_min_deg && tilt_deg <= g.tilt_max_deg;
+    }
+
+    // IFF bilgisi varsa sınıf bazlı düşman bilgisini override et.
+    static bool shouldTreatAsEnemy(const sancak::Detection& d) {
+        if (d.affiliation == sancak::Affiliation::Friend) return false;
+        if (d.affiliation == sancak::Affiliation::Foe) return true;
+        return sancak::IsEnemy(d.target_class);
+    }
+}
 
 namespace {
     std::atomic<bool> g_signal_stop{false};
@@ -56,6 +105,32 @@ bool CombatPipeline::initialize(const SystemConfig& config) {
     // 4. Takip sistemi başlat
     tracker_.initialize(config_.tracking);
 
+    // 4.1 Trigger Controller
+    trigger_controller_.initialize(
+        config_.trigger.aim_tolerance_px,
+        config_.trigger.lock_frames_required,
+        config_.trigger.burst_duration_ms,
+        config_.trigger.cooldown_ms);
+
+    // 4.2 Combat State Machine (kural motoru + geofence)
+    {
+        core::Geofence fence;
+        fence.pan_min = config_.geofence.pan_min_deg;
+        fence.pan_max = config_.geofence.pan_max_deg;
+        fence.tilt_min = config_.geofence.tilt_min_deg;
+        fence.tilt_max = config_.geofence.tilt_max_deg;
+
+        auto rules = ConfigManager::instance().getTargetRules();
+        if (rules.empty()) {
+            // Güvenli varsayılanlar (konfig yoksa)
+            rules[core::TargetClass::Drone] = {core::TargetClass::Drone, 0.0f, 50.0f, 2};
+            rules[core::TargetClass::F16] = {core::TargetClass::F16, 0.0f, 50.0f, 1};
+            rules[core::TargetClass::Helicopter] = {core::TargetClass::Helicopter, 0.0f, 50.0f, 3};
+            rules[core::TargetClass::Missile] = {core::TargetClass::Missile, 0.0f, 50.0f, 0};
+        }
+        combat_state_machine_ = std::make_unique<core::CombatStateMachine>(rules, fence);
+    }
+
     // 5. Kamera aç
     SANCAK_LOG_INFO("Kamera açılıyor...");
     if (!camera_.open(config_.camera)) {
@@ -64,7 +139,35 @@ bool CombatPipeline::initialize(const SystemConfig& config) {
 
     // 6. Seri port aç
     if (config_.serial.enabled) {
-        serial_.open(config_.serial);
+        // Yeni protokol sürücüsü (kuyruklu + auto-reconnect)
+        turret_controller_ = std::make_unique<TurretController>(config_.serial.port, config_.serial.baud_rate);
+    }
+
+    // 7. Ağ katmanı (opsiyonel)
+    if (config_.network.video_enabled) {
+        net::UdpVideoConfig vcfg;
+        vcfg.host = config_.network.gcs_host;
+        vcfg.port = static_cast<std::uint16_t>(config_.network.video_udp_port);
+        vcfg.mtu_bytes = static_cast<std::size_t>(config_.network.udp_mtu_bytes);
+        vcfg.jpeg_quality = config_.network.jpeg_quality;
+        (void)video_streamer_.start(std::move(vcfg));
+    }
+    if (config_.network.telemetry_enabled) {
+        net::TcpTelemetryConfig tcfg;
+        tcfg.port = static_cast<std::uint16_t>(config_.network.telemetry_tcp_port);
+        (void)telemetry_server_.start(tcfg);
+
+        // Outbound telemetry opsiyonel: port çakışmasını engelle.
+        // Sadece Pi->PC push isteniyorsa açılır (telemetry_push_port > 0).
+        if (config_.network.telemetry_push_port > 0 &&
+            config_.network.telemetry_push_port != config_.network.telemetry_tcp_port) {
+            (void)telemetry_sender_.start(config_.network.gcs_host,
+                              static_cast<std::uint16_t>(config_.network.telemetry_push_port));
+        } else {
+            SANCAK_LOG_WARN("TelemetrySender devre dışı: push_port={} tcp_port={} (server-only topoloji için normal)",
+                            config_.network.telemetry_push_port,
+                            config_.network.telemetry_tcp_port);
+        }
     }
 
     state_ = PipelineState::kIdle;
@@ -83,78 +186,274 @@ PipelineOutput CombatPipeline::processFrame(const cv::Mat& frame) {
     output.display_frame = frame.clone();
     output.fps = updateFps();
 
-    if (frame.empty()) {
-        output.state = PipelineState::kIdle;
+    double inference_ms = 0.0;
+    double aim_solve_ms = 0.0;
+
+    sancak::AimResult aimRes{};
+    const TrackedTarget* locked = nullptr;
+    std::uint8_t telem_state = static_cast<std::uint8_t>(core::CombatState::Idle);
+    std::int32_t telem_target_id = -1;
+    float telem_distance_m = 0.0f;
+
+    auto finalize = [&]() -> PipelineOutput {
+        // Görselleştirme
+        if (!config_.headless || config_.network.video_enabled) {
+            drawOverlay(output.display_frame, output);
+        }
+
+        // Network
+        if (config_.network.video_enabled) {
+            video_streamer_.submit(output.display_frame);
+        }
+        if (config_.network.telemetry_enabled) {
+            telemetry_server_.publishAimResult(aimRes, net_frame_id_);
+
+            net::AimTelemetry t;
+            t.current_state = telem_state;
+            t.target_id = telem_target_id;
+            t.raw_x = aimRes.raw_xy.x;
+            t.raw_y = aimRes.raw_xy.y;
+            t.corrected_x = aimRes.corrected_xy.x;
+            t.corrected_y = aimRes.corrected_xy.y;
+            t.distance_m = telem_distance_m;
+            telemetry_sender_.sendTelemetry(t);
+        }
+
+        // INetworkSender ile gelişmiş telemetri (opsiyonel)
+        if (net_sender_) {
+            AimTelemetry telem;
+            telem.aim = aimRes;
+            telem.inference_ms = inference_ms;
+            telem.aim_solve_ms = aim_solve_ms;
+            telem.frame_id = net_frame_id_;
+            telem.monotonic_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                                     std::chrono::steady_clock::now().time_since_epoch())
+                                     .count();
+            net_sender_->publishAimTelemetry(telem);
+        }
+
+        net_frame_id_++;
         return output;
+    };
+
+    if (frame.empty()) {
+        state_ = PipelineState::kIdle;
+        output.state = state_;
+        trigger_controller_.reset();
+        if (turret_controller_) {
+            turret_controller_->sendCommand(current_pan_deg_, current_tilt_deg_, false);
+        }
+        return finalize();
     }
 
     // ========== AŞAMA 1: YOLO TESPİT ==========
     auto detections = yolo_.detect(frame);
-    output.inference_ms = yolo_.lastInferenceMs();
+    inference_ms = yolo_.lastInferenceMs();
+    output.inference_ms = inference_ms;
+
+    // IFF (Dost-Düşman) renk analizi
+    const cv::Scalar red_lower(config_.iff.foe_red.h_min,
+                               config_.iff.foe_red.s_min,
+                               config_.iff.foe_red.v_min);
+    const cv::Scalar red_upper(config_.iff.foe_red.h_max,
+                               config_.iff.foe_red.s_max,
+                               config_.iff.foe_red.v_max);
+    const cv::Scalar blue_lower(config_.iff.friend_blue.h_min,
+                                config_.iff.friend_blue.s_min,
+                                config_.iff.friend_blue.v_min);
+    const cv::Scalar blue_upper(config_.iff.friend_blue.h_max,
+                                config_.iff.friend_blue.s_max,
+                                config_.iff.friend_blue.v_max);
+
+    for (auto& det : detections) {
+        // Güvenli ROI kesimi
+        cv::Rect roi = det.bbox;
+        roi &= cv::Rect(0, 0, frame.cols, frame.rows);
+        if (roi.width <= 0 || roi.height <= 0) {
+            det.affiliation = Affiliation::Unknown;
+            continue;
+        }
+        cv::Mat roi_mat = frame(roi);
+        cv::Mat hsv_roi;
+        cv::cvtColor(roi_mat, hsv_roi, cv::COLOR_BGR2HSV);
+
+        cv::Mat mask_red, mask_blue;
+        cv::inRange(hsv_roi, red_lower, red_upper, mask_red);
+        cv::inRange(hsv_roi, blue_lower, blue_upper, mask_blue);
+
+        int red_count = cv::countNonZero(mask_red);
+        int blue_count = cv::countNonZero(mask_blue);
+
+        if (red_count > blue_count && red_count > 0) {
+            det.affiliation = Affiliation::Foe;
+        } else if (blue_count > red_count && blue_count > 0) {
+            det.affiliation = Affiliation::Friend;
+        } else {
+            det.affiliation = Affiliation::Unknown;
+        }
+    }
 
     if (detections.empty()) {
         state_ = PipelineState::kIdle;
-        serial_.sendIdleCommand();
         output.state = state_;
-        if (!config_.headless) drawOverlay(output.display_frame, output);
-        return output;
+        trigger_controller_.reset();
+        if (turret_controller_) {
+            turret_controller_->sendCommand(current_pan_deg_, current_tilt_deg_, false);
+        }
+        return finalize();
     }
 
+    // ========== AŞAMA 2: TAKİP ==========
     state_ = PipelineState::kDetecting;
+    auto& tracked = tracker_.update(detections);
 
-    // ========== AŞAMA 2: TAKİP GÜNCELLE ==========
-    auto tracked = tracker_.update(detections);
-
-    // ========== AŞAMA 3: HER HEDEF İÇİN BALON SEG + NİŞAN ==========
+    // ========== AŞAMA 3: BALON + NİŞAN/BALİSTİK ==========
     for (auto& target : tracked) {
-        // Sadece düşman hedefleri işle
-        if (!IsEnemy(target.detection.target_class)) continue;
+        if (!shouldTreatAsEnemy(target.detection)) continue;
 
-        // Balon segmentasyonu
         target.balloon = segmentor_.segment(frame, target.detection.bbox);
+        if (!target.balloon.found) continue;
 
-        if (target.balloon.found) {
-            state_ = PipelineState::kTracking;
+        state_ = PipelineState::kTracking;
 
-            // Nişan noktası hesapla
-            target.aim = aim_solver_.solve(
-                target.balloon,
-                target.detection,
-                target.velocity,
-                output.fps,
-                frame.size()
-            );
+        const auto tAim0 = std::chrono::steady_clock::now();
+        target.aim = aim_solver_.solve(
+            target.balloon,
+            target.detection,
+            target.velocity,
+            output.fps,
+            frame.size());
+        const auto tAim1 = std::chrono::steady_clock::now();
+        aim_solve_ms = std::chrono::duration<double, std::milli>(tAim1 - tAim0).count();
 
-            if (target.aim.valid && target.is_priority) {
-                state_ = PipelineState::kLocked;
-            }
+        if (target.aim.valid && target.is_priority) {
+            state_ = PipelineState::kLocked;
         }
     }
 
     output.targets = tracked;
 
-    // ========== AŞAMA 4: ÖNCELİKLİ HEDEF SEÇ ==========
-    const auto* priority = tracker_.getPriorityTarget();
-    if (priority && priority->aim.valid) {
-        output.primary_aim = priority->aim;
+    // ========== AŞAMA 4: KARAR (STATE MACHINE) ==========
+    std::vector<core::TrackedTarget> sm_targets;
+    sm_targets.reserve(tracked.size());
+    for (const auto& t : tracked) {
+        if (!shouldTreatAsEnemy(t.detection)) continue;
+        if (!t.aim.valid) continue;
 
-        // Arduino'ya nişan komutu gönder
-        serial_.sendAimCommand(priority->aim);
+        core::TrackedTarget ct;
+        ct.id = t.track_id;
+        ct.target_class = toCoreTargetClass(t.detection.target_class);
+        ct.affiliation = toCoreAffiliation(t.detection.affiliation);
+        ct.distance_m = t.aim.distance_m;
+        ct.confidence = t.detection.confidence;
+        sm_targets.push_back(ct);
+    }
 
-        // Otonom modda ve kilitliyse state güncelle
-        if (config_.autonomous && state_ == PipelineState::kLocked) {
-            state_ = PipelineState::kEngaging;
+    core::CombatDecision decision;
+    decision.state = sm_targets.empty() ? core::CombatState::Searching : core::CombatState::Tracking;
+    decision.locked_target_id = -1;
+    if (combat_state_machine_) {
+        decision = combat_state_machine_->update(sm_targets, current_pan_deg_, current_tilt_deg_);
+    }
+
+    state_ = toPipelineState(decision.state);
+    telem_state = static_cast<std::uint8_t>(decision.state);
+
+    if (decision.locked_target_id >= 0) {
+        for (const auto& t : tracked) {
+            if (t.track_id == decision.locked_target_id && t.aim.valid) {
+                locked = &t;
+                break;
+            }
+        }
+    }
+    if (!locked) {
+        const auto* priority = tracker_.getPriorityTarget();
+        if (priority && priority->aim.valid && shouldTreatAsEnemy(priority->detection)) {
+            locked = priority;
         }
     }
 
-    output.state = state_;
-
-    // ========== AŞAMA 5: GÖRSELLEŞTİRME ==========
-    if (!config_.headless) {
-        drawOverlay(output.display_frame, output);
+    if (locked) {
+        telem_target_id = locked->track_id;
+        telem_distance_m = locked->aim.distance_m;
     }
 
-    return output;
+    // ========== AŞAMA 5: FOV MAPPING + TRIGGER + TARET ==========
+    bool fire_flag = false;
+    if (decision.state == core::CombatState::SafeLock) {
+        trigger_controller_.reset();
+        if (turret_controller_) {
+            turret_controller_->sendSafeLock();
+            turret_controller_->sendCommand(current_pan_deg_, current_tilt_deg_, false);
+        }
+    } else if (locked && (decision.state == core::CombatState::Tracking || decision.state == core::CombatState::Engaging)) {
+        output.primary_aim = locked->aim;
+
+        const cv::Point2f crosshair_center(frame.cols / 2.0f, frame.rows / 2.0f);
+        const float dx_px = locked->aim.corrected.x - crosshair_center.x;
+        const float dy_px = locked->aim.corrected.y - crosshair_center.y;
+
+        const float deg_per_px_x = (frame.cols > 0)
+                                      ? (config_.camera.h_fov_deg / static_cast<float>(frame.cols))
+                                      : 0.0f;
+        const float deg_per_px_y = (frame.rows > 0)
+                                      ? (config_.camera.v_fov_deg / static_cast<float>(frame.rows))
+                                      : 0.0f;
+
+        float delta_pan_deg = dx_px * deg_per_px_x;
+        float delta_tilt_deg = -dy_px * deg_per_px_y;
+
+        // Deadzone: mikro salınımı engelle (hunting/oscillation).
+        constexpr float kServoDeadzoneDeg = 0.5f;
+        if (std::fabs(delta_pan_deg) < kServoDeadzoneDeg) {
+            delta_pan_deg = 0.0f;
+        }
+        if (std::fabs(delta_tilt_deg) < kServoDeadzoneDeg) {
+            delta_tilt_deg = 0.0f;
+        }
+
+        const float desired_pan = current_pan_deg_ + delta_pan_deg;
+        const float desired_tilt = current_tilt_deg_ + delta_tilt_deg;
+
+        if (!isInsideGeofence(config_.geofence, desired_pan, desired_tilt)) {
+            state_ = PipelineState::kIdle;
+            trigger_controller_.reset();
+            if (turret_controller_) {
+                turret_controller_->sendSafeLock();
+                turret_controller_->sendCommand(current_pan_deg_, current_tilt_deg_, false);
+            }
+        } else {
+            current_pan_deg_ = desired_pan;
+            current_tilt_deg_ = desired_tilt;
+
+            if (config_.autonomous && decision.state == core::CombatState::Engaging) {
+                fire_flag = trigger_controller_.update(locked->aim.corrected, crosshair_center);
+            } else {
+                trigger_controller_.reset();
+            }
+
+            if (turret_controller_) {
+                turret_controller_->sendCommand(current_pan_deg_, current_tilt_deg_, fire_flag);
+            }
+        }
+    } else {
+        trigger_controller_.reset();
+        if (turret_controller_) {
+            turret_controller_->sendCommand(current_pan_deg_, current_tilt_deg_, false);
+        }
+    }
+
+    // ========== AŞAMA 6: AimResult doldur ==========
+    if (locked && output.primary_aim.has_value()) {
+        aimRes.raw_xy = output.primary_aim->raw_center;
+        aimRes.corrected_xy = output.primary_aim->corrected;
+        aimRes.class_id = locked->detection.class_id;
+        aimRes.valid = output.primary_aim->valid;
+    }
+
+    output.state = state_;
+    return finalize();
 }
 
 void CombatPipeline::run() {
@@ -209,6 +508,10 @@ void CombatPipeline::stop() {
     running_ = false;
     camera_.release();
     serial_.close();
+    turret_controller_.reset();
+    video_streamer_.stop();
+    telemetry_server_.stop();
+    telemetry_sender_.stop();
     if (!config_.headless) cv::destroyAllWindows();
     SANCAK_LOG_INFO("Pipeline durduruldu");
 }
@@ -236,7 +539,7 @@ void CombatPipeline::drawOverlay(cv::Mat& frame, const PipelineOutput& output) c
 void CombatPipeline::drawDetections(cv::Mat& frame,
                                      const std::vector<TrackedTarget>& targets) const {
     for (const auto& t : targets) {
-        bool enemy = IsEnemy(t.detection.target_class);
+        bool enemy = shouldTreatAsEnemy(t.detection);
         cv::Scalar color = enemy ? cv::Scalar(0, 0, 255) : cv::Scalar(0, 255, 0);
 
         // Bounding box

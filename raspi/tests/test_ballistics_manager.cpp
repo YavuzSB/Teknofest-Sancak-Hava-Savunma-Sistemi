@@ -108,3 +108,18 @@ TEST_CASE("BallisticsManager - Manuel offset", "[ballistics]") {
     // dy = table(6.0) + manual(-3.0) = 3.0
     REQUIRE(corr.dy_px == Approx(3.0f).margin(0.5f));
 }
+
+TEST_CASE("BallisticsManager - applyCorrection", "[ballistics]") {
+    BallisticsManager bm;
+    auto cfg = makeDefaultConfig();
+    cfg.manual_offset_x_px = 2.0f;
+    cfg.manual_offset_y_px = -1.0f;
+    bm.initialize(cfg);
+
+    // 7.5m: 5m(15) ile 10m(6) arası -> 10.5, sonra manuel -1 -> 9.5
+    const cv::Point2f raw(100.0f, 200.0f);
+    const cv::Point2f corr = bm.applyCorrection(raw, 7.5f);
+
+    REQUIRE(corr.x == Approx(102.0f).margin(0.001f));
+    REQUIRE(corr.y == Approx(209.5f).margin(0.001f));
+}

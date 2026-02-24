@@ -118,6 +118,15 @@ void BallisticsManager::interpolateFromTable(float distance_m,
     }
 }
 
+cv::Point2f BallisticsManager::applyCorrection(const cv::Point2f& raw_center, float distance_m) const {
+    float dx = 0.0f;
+    float dy = 0.0f;
+    interpolateFromTable(distance_m, dx, dy);
+    dx += config_.manual_offset_x_px;
+    dy += config_.manual_offset_y_px;
+    return cv::Point2f(raw_center.x + dx, raw_center.y + dy);
+}
+
 BallisticCorrection BallisticsManager::calculate(float distance_m,
                                                   const cv::Point2f& target_velocity,
                                                   double fps) const {

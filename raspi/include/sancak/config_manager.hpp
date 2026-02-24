@@ -11,10 +11,12 @@
 #pragma once
 
 #include "sancak/types.hpp"
+#include "core/types.hpp"
 
 #include <string>
 #include <mutex>
 #include <fstream>
+#include <map>
 
 namespace sancak {
 
@@ -26,6 +28,41 @@ struct CameraConfig {
     int  fps_target     = 30;
     bool flip_horizontal = false;
     bool flip_vertical   = false;
+
+    // FOV (derece) - piksel->açı dönüşümü için
+    float h_fov_deg = 60.0f;
+    float v_fov_deg = 45.0f;
+};
+
+/// Geofence (mekanik sınırlar) ayarları
+struct GeofenceConfig {
+    float pan_min_deg = -90.0f;
+    float pan_max_deg = 90.0f;
+    float tilt_min_deg = -10.0f;
+    float tilt_max_deg = 45.0f;
+};
+
+/// Tetik disiplin motoru ayarları
+struct TriggerConfig {
+    float aim_tolerance_px = 15.0f;
+    int   lock_frames_required = 5;
+    int   burst_duration_ms = 500;
+    int   cooldown_ms = 1000;
+};
+
+/// IFF (Dost-Düşman) renk eşik ayarları
+struct IffConfig {
+    struct HsvRange {
+        int h_min = 0;
+        int h_max = 0;
+        int s_min = 0;
+        int s_max = 0;
+        int v_min = 0;
+        int v_max = 0;
+    };
+
+    HsvRange foe_red    = {0, 10, 100, 255, 100, 255};
+    HsvRange friend_blue = {100, 140, 100, 255, 100, 255};
 };
 
 /// YOLO model ayarları
@@ -95,6 +132,7 @@ struct BallisticsConfig {
 /// Takip ayarları
 struct TrackingConfig {
     float iou_threshold      = 0.3f;   ///< IoU eşleşme eşiği
+    float max_center_distance_px = 50.0f; ///< IoU yetersizse merkez mesafesi eşiği (px)
     int   max_lost_frames    = 15;     ///< Kaç frame sonra hedef düşürülür
     int   min_confirm_frames = 3;      ///< Kaç frame sonra onaylanır
     float velocity_smoothing = 0.7f;   ///< Hız EMA katsayısı
@@ -108,6 +146,19 @@ struct SerialConfig {
     bool        enabled    = true;
 };
 
+/// Ağ (GCS iletişimi) ayarları
+struct NetworkConfig {
+    bool        video_enabled = true;
+    bool        telemetry_enabled = true;
+    std::string gcs_host = "192.168.1.10";
+    int         video_udp_port = 5005;
+    int         telemetry_tcp_port = 5000;
+    int         telemetry_push_port = 5001; ///< Outbound telemetry için ayrı port
+
+    int         jpeg_quality = 70;       ///< [10..95]
+    int         udp_mtu_bytes = 1200;    ///< UDP payload hedefi
+};
+
 /// Tüm ayarları toplayan üst yapı
 struct SystemConfig {
     CameraConfig     camera;
@@ -116,7 +167,11 @@ struct SystemConfig {
     DistanceConfig   distance;
     BallisticsConfig ballistics;
     TrackingConfig   tracking;
+    GeofenceConfig   geofence;
+    TriggerConfig    trigger;
+    IffConfig        iff;
     SerialConfig     serial;
+    NetworkConfig    network;
 
     /// Genel
     bool headless       = true;   ///< Monitörsüz çalışma
@@ -141,17 +196,17 @@ public:
      * @param path JSON dosya yolu
      * @return Başarılı mı?
      */
-    bool loadFromFile(const std::string& path);
+    [[nodiscard]] bool loadFromFile(const std::string& path);
 
     /**
      * @brief Mevcut konfigürasyonu JSON dosyasına yazar
      * @param path Dosya yolu
      * @return Başarılı mı?
      */
-    bool saveToFile(const std::string& path) const;
+    [[nodiscard]] bool saveToFile(const std::string& path) const;
 
     /// Mevcut konfigürasyonu al (thread-safe kopya)
-    SystemConfig get() const;
+    [[nodiscard]] SystemConfig get() const;
 
     /// Konfigürasyonu güncelle (thread-safe)
     void set(const SystemConfig& cfg);
@@ -166,13 +221,18 @@ public:
     /// Otonom modu değiştir
     void setAutonomous(bool enabled);
 
-private:
+    // Target rules getter
+    [[nodiscard]] std::optional<core::TargetRule> getRule(core::TargetClass type) const;
+    [[nodiscard]] const std::map<core::TargetClass, core::TargetRule>& getTargetRules() const { return target_rules_; }
+public:
     ConfigManager() = default;
     ConfigManager(const ConfigManager&) = delete;
     ConfigManager& operator=(const ConfigManager&) = delete;
 
+private:
     mutable std::mutex mutex_;
     SystemConfig config_;
+    std::map<core::TargetClass, core::TargetRule> target_rules_;
 };
 
 } // namespace sancak

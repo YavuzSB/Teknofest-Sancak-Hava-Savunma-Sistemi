@@ -20,8 +20,18 @@
 #include "sancak/balloon_segmentor.hpp"
 #include "sancak/aim_solver.hpp"
 #include "sancak/target_tracker.hpp"
+#include "sancak/trigger_controller.hpp"
 #include "sancak/camera_controller.hpp"
 #include "sancak/serial_comm.hpp"
+
+#include "core/combat_state_machine.hpp"
+#include "turret_controller.hpp"
+
+#include "network/udp_video_streamer.hpp"
+#include "network/tcp_telemetry_server.hpp"
+#include "network/telemetry_sender.hpp"
+
+#include <memory>
 
 namespace sancak {
 
@@ -41,7 +51,7 @@ namespace sancak {
  */
 class CombatPipeline {
 public:
-    CombatPipeline() = default;
+    explicit CombatPipeline(INetworkSender* net = nullptr) : net_sender_(net) {}
 
     /**
      * @brief Tüm modülleri başlat
@@ -72,7 +82,6 @@ public:
     AimSolver& aimSolver() { return aim_solver_; }
     TargetTracker& tracker() { return tracker_; }
 
-private:
     /// Frame üzerine tüm bilgileri çiz
     void drawOverlay(cv::Mat& frame, const PipelineOutput& output) const;
 
@@ -94,8 +103,22 @@ private:
     BalloonSegmentor  segmentor_;
     AimSolver         aim_solver_;
     TargetTracker     tracker_;
+    TriggerController trigger_controller_;
     CameraController  camera_;
     SerialComm        serial_;
+
+    // Kural motoru (state machine) ve donanım sürücüsü
+    std::unique_ptr<core::CombatStateMachine> combat_state_machine_;
+    std::unique_ptr<TurretController> turret_controller_;
+    float current_pan_deg_ = 0.0f;
+    float current_tilt_deg_ = 0.0f;
+
+    // Ağ katmanı
+    net::UdpVideoStreamer   video_streamer_;
+    net::TcpTelemetryServer telemetry_server_;
+    net::TelemetrySender    telemetry_sender_;
+    std::uint32_t           net_frame_id_ = 1;
+    INetworkSender*         net_sender_ = nullptr;
 
     // Durum
     SystemConfig config_;

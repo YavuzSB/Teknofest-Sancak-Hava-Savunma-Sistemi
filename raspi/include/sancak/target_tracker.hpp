@@ -44,7 +44,7 @@ public:
      * @param detections Güncel frame tespitleri
      * @return Aktif track'lerin listesi
      */
-    std::vector<TrackedTarget> update(const std::vector<Detection>& detections);
+    std::vector<TrackedTarget>& update(const std::vector<Detection>& detections);
 
     /**
      * @brief Tüm track'leri sıfırla
@@ -64,6 +64,12 @@ public:
 private:
     /// İki bounding box arası IoU hesapla
     static float computeIoU(const cv::Rect2f& a, const cv::Rect2f& b);
+
+    /// Bounding box merkezi
+    static cv::Point2f getCenter(const cv::Rect2f& r);
+
+    /// İki bbox merkezi arası Öklid mesafesi (px)
+    static float centerDistance(const cv::Rect2f& a, const cv::Rect2f& b);
 
     /// Greedy IoU eşleştirme
     std::vector<std::pair<int, int>> matchDetections(

@@ -33,7 +33,7 @@ TEST_CASE("TargetTracker - Yeni hedef oluşturma", "[tracker]") {
     tracker.initialize(makeConfig());
 
     std::vector<Detection> dets = { makeDet(100, 100, 50, 50) };
-    auto tracks = tracker.update(dets);
+    auto& tracks = tracker.update(dets);
 
     REQUIRE(tracks.size() == 1);
     REQUIRE(tracks[0].track_id >= 0);
@@ -48,10 +48,32 @@ TEST_CASE("TargetTracker - Hedef eşleşmesi (IoU)", "[tracker]") {
     tracker.update({ makeDet(100, 100, 50, 50) });
 
     // İkinci frame (biraz kaymış)
-    auto tracks = tracker.update({ makeDet(105, 105, 50, 50) });
+    auto& tracks = tracker.update({ makeDet(105, 105, 50, 50) });
 
     REQUIRE(tracks.size() == 1);
     REQUIRE(tracks[0].age == 2);  // Aynı track devam etmeli
+}
+
+TEST_CASE("TargetTracker - Merkez mesafesi fallback (IoU düşerse)", "[tracker]") {
+    TargetTracker tracker;
+    auto cfg = makeConfig();
+    cfg.iou_threshold = 0.3f;
+    cfg.max_center_distance_px = 50.0f;
+    tracker.initialize(cfg);
+
+    // Frame 1: küçük bbox
+    auto& t1 = tracker.update({ makeDet(100, 100, 50, 50) });
+    REQUIRE(t1.size() == 1);
+    const int id0 = t1[0].track_id;
+
+    // Frame 2: bbox boyutu aniden büyüsün ama merkez aynı kalsın.
+    // (100,100,50,50) merkezi (125,125). Yeni bbox: (75,75,100,100) merkezi yine (125,125).
+    // IoU = 0.25 (<0.3) olduğu için IoU eşleşmesi başarısız; fallback merkez mesafesi ile eşleşmeli.
+    auto& t2 = tracker.update({ makeDet(75, 75, 100, 100) });
+
+    REQUIRE(t2.size() == 1);
+    REQUIRE(t2[0].track_id == id0);
+    REQUIRE(t2[0].age == 2);
 }
 
 TEST_CASE("TargetTracker - Hedef kaybı", "[tracker]") {
@@ -110,7 +132,7 @@ TEST_CASE("TargetTracker - Hız hesaplama", "[tracker]") {
     // Frame 1: (100, 100)
     tracker.update({ makeDet(100, 100, 50, 50) });
     // Frame 2: (110, 100) → 10px sağa
-    auto tracks = tracker.update({ makeDet(110, 100, 50, 50) });
+    auto& tracks = tracker.update({ makeDet(110, 100, 50, 50) });
 
     REQUIRE(tracks.size() == 1);
     REQUIRE(tracks[0].velocity.x > 0.0f);  // Sağa hareket

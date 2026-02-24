@@ -27,6 +27,10 @@
 #include <algorithm>
 #include <sstream>
 #include <cstring>
+#include <vector>
+#include <chrono>
+
+#include "NetworkProtocol.hpp"
 
 namespace teknofest {
 
@@ -39,6 +43,20 @@ TelemetryClient::TelemetryClient(const std::string& host, uint16_t port)
 
 TelemetryClient::~TelemetryClient() {
     stop();
+}
+
+void TelemetryClient::setLogCallback(LogCallback cb) {
+    std::lock_guard<std::mutex> lock(m_cbMutex);
+    m_logCallback = std::move(cb);
+}
+
+void TelemetryClient::emitLog(int level, const std::string& msg) {
+    LogCallback cb;
+    {
+        std::lock_guard<std::mutex> lock(m_cbMutex);
+        cb = m_logCallback;
+    }
+    if (cb) cb(level, msg);
 }
 
 // ── Public API ──────────────────────────────────────────────────────────────
@@ -71,6 +89,89 @@ bool TelemetryClient::getLatestTelemetry(TelemetryData& data) {
     if (!m_hasNewData) return false;
     data = m_latestData;
     m_hasNewData = false;
+    return true;
+}
+
+bool TelemetryClient::getLatestAimResult(AimResult& data) {
+    std::lock_guard<std::mutex> lock(m_dataMutex);
+    if (!m_hasNewAim) return false;
+    data = m_latestAim;
+    m_hasNewAim = false;
+    return true;
+}
+
+static uint32_t readU32LE(const uint8_t* p) {
+    return (static_cast<uint32_t>(p[0])      ) |
+           (static_cast<uint32_t>(p[1]) <<  8) |
+           (static_cast<uint32_t>(p[2]) << 16) |
+           (static_cast<uint32_t>(p[3]) << 24);
+}
+
+static int32_t readI32LE(const uint8_t* p) {
+    return static_cast<int32_t>(readU32LE(p));
+}
+
+static float readF32LE(const uint8_t* p) {
+    uint32_t u = readU32LE(p);
+    float f = 0.0f;
+    std::memcpy(&f, &u, sizeof(f));
+    return f;
+}
+
+bool TelemetryClient::tryParseAimFrame(std::vector<uint8_t>& buffer, AimResult& out) {
+    if (buffer.size() < sizeof(teknofest::net::TcpMsgHeader)) return false;
+
+    if (!teknofest::net::isTcpFrame(buffer.data(), buffer.size())) {
+        // Magic mismatch (stream bozulması) -> 1 byte kaydırıp resync dene
+        const auto now = std::chrono::steady_clock::now();
+        if (m_lastParseWarn.time_since_epoch().count() == 0 ||
+            (now - m_lastParseWarn) > std::chrono::seconds(1)) {
+            emitLog(1, "Bozuk telemetri paketi alindi (Magic mismatch)!");
+            m_lastParseWarn = now;
+        }
+        buffer.erase(buffer.begin());
+        return false;
+    }
+
+    teknofest::net::TcpMsgHeader hdr{};
+    std::memcpy(&hdr, buffer.data(), sizeof(hdr));
+
+    if (hdr.version != teknofest::net::kProtocolVersion) {
+        // magic match ama versiyon farklı: 1 byte kaydırıp tekrar dene
+        const auto now = std::chrono::steady_clock::now();
+        if (m_lastParseWarn.time_since_epoch().count() == 0 ||
+            (now - m_lastParseWarn) > std::chrono::seconds(1)) {
+            emitLog(1, "Bozuk telemetri paketi alindi (Version mismatch)!");
+            m_lastParseWarn = now;
+        }
+        buffer.erase(buffer.begin());
+        return false;
+    }
+
+    const size_t totalBytes = sizeof(hdr) + hdr.payload_bytes;
+    if (buffer.size() < totalBytes) return false;
+
+    if (hdr.type != static_cast<uint8_t>(teknofest::net::TcpMsgType::kAimResultV1) || hdr.payload_bytes < 28) {
+        const auto now = std::chrono::steady_clock::now();
+        if (m_lastParseWarn.time_since_epoch().count() == 0 ||
+            (now - m_lastParseWarn) > std::chrono::seconds(1)) {
+            emitLog(1, "Bozuk telemetri paketi alindi (Frame type/size)!");
+            m_lastParseWarn = now;
+        }
+        buffer.erase(buffer.begin(), buffer.begin() + static_cast<std::ptrdiff_t>(totalBytes));
+        return false;
+    }
+
+    const uint8_t* p = buffer.data() + sizeof(hdr);
+    out.frame_id = readU32LE(p + 0);
+    out.raw_x = readF32LE(p + 4);
+    out.raw_y = readF32LE(p + 8);
+    out.corrected_x = readF32LE(p + 12);
+    out.corrected_y = readF32LE(p + 16);
+    out.class_id = readI32LE(p + 20);
+    out.valid = (p[24] != 0);
+
+    buffer.erase(buffer.begin(), buffer.begin() + static_cast<std::ptrdiff_t>(totalBytes));
     return true;
 }
 
@@ -120,9 +221,11 @@ void TelemetryClient::clientLoop() {
 
     while (m_running.load(std::memory_order_acquire)) {
         m_state.store(State::Connecting, std::memory_order_release);
+        emitLog(0, "Sunucuya baglaniliyor: " + m_host + ":" + std::to_string(m_port));
 
         socket_t sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
         if (sock == kInvalidSocket) {
+            emitLog(2, "Socket olusturulamadi");
             m_state.store(State::Retrying, std::memory_order_release);
             std::this_thread::sleep_for(std::chrono::milliseconds(kBackoffMs));
             continue;
@@ -135,12 +238,14 @@ void TelemetryClient::clientLoop() {
 
         if (connect(sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
             closeSocket(sock);
+            emitLog(1, "TCP baglanti denemesi basarisiz");
             m_state.store(State::Retrying, std::memory_order_release);
             std::this_thread::sleep_for(std::chrono::milliseconds(kBackoffMs));
             continue;
         }
 
         m_state.store(State::Connected, std::memory_order_release);
+        emitLog(0, "TCP baglandi");
 
         // Okunma zaman aşımı (500 ms)
 #ifdef _WIN32
@@ -152,7 +257,7 @@ void TelemetryClient::clientLoop() {
         setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 #endif
 
-        std::string recvBuffer;
+        std::vector<uint8_t> recvBuffer;
         bool connectionError = false;
 
         while (m_running.load(std::memory_order_acquire) && !connectionError) {
@@ -164,6 +269,7 @@ void TelemetryClient::clientLoop() {
                     const int sent = send(sock, cmd.c_str(),
                                           static_cast<int>(cmd.size()), 0);
                     if (sent <= 0) {
+                        emitLog(2, "TCP baglantisi koptu/hata olustu! (send)");
                         connectionError = true;
                         break;
                     }
@@ -177,14 +283,27 @@ void TelemetryClient::clientLoop() {
             const int received = recv(sock, chunk, sizeof(chunk) - 1, 0);
 
             if (received > 0) {
-                chunk[received] = '\0';
-                recvBuffer += chunk;
+                recvBuffer.insert(recvBuffer.end(),
+                                  reinterpret_cast<uint8_t*>(chunk),
+                                  reinterpret_cast<uint8_t*>(chunk) + received);
 
-                // Tam satırları işle
-                std::string::size_type pos;
-                while ((pos = recvBuffer.find('\n')) != std::string::npos) {
-                    std::string line = recvBuffer.substr(0, pos);
-                    recvBuffer.erase(0, pos + 1);
+                // Parse: Önce binary frame, sonra newline telemetry
+                for (;;) {
+                    AimResult aim{};
+                    if (tryParseAimFrame(recvBuffer, aim)) {
+                        std::lock_guard<std::mutex> lock(m_dataMutex);
+                        m_latestAim = aim;
+                        m_hasNewAim = true;
+                        continue;
+                    }
+
+                    // newline ara
+                    auto it = std::find(recvBuffer.begin(), recvBuffer.end(), static_cast<uint8_t>('\n'));
+                    if (it == recvBuffer.end()) break;
+
+                    const auto len = static_cast<size_t>(std::distance(recvBuffer.begin(), it));
+                    std::string line(reinterpret_cast<const char*>(recvBuffer.data()), len);
+                    recvBuffer.erase(recvBuffer.begin(), it + 1);
 
                     // Trim
                     {
@@ -200,8 +319,15 @@ void TelemetryClient::clientLoop() {
                         m_hasNewData = true;
                     }
                 }
+
+                // Safety: buffer büyümesin
+                if (recvBuffer.size() > 1'000'000) {
+                    emitLog(1, "Alim buffer temizlendi (cok buyudu)");
+                    recvBuffer.clear();
+                }
             } else if (received == 0) {
                 // Bağlantı kapandı
+                emitLog(2, "TCP baglantisi koptu/hata olustu! (peer closed)");
                 connectionError = true;
             }
             // received < 0 → zaman aşımı, döngüye devam
@@ -210,6 +336,7 @@ void TelemetryClient::clientLoop() {
         closeSocket(sock);
 
         if (connectionError && m_running.load(std::memory_order_acquire)) {
+            emitLog(1, "Telemetri yeniden baglaniyor...");
             m_state.store(State::Retrying, std::memory_order_release);
             std::this_thread::sleep_for(std::chrono::milliseconds(kBackoffMs));
         }

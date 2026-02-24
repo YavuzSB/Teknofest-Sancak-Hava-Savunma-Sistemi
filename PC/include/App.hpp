@@ -7,12 +7,22 @@
 
 #include <memory>
 #include <string>
+#include <array>
 #include <vector>
 #include <chrono>
+#include <mutex>
+#include <utility>
 
 struct GLFWwindow;
 
 namespace teknofest {
+
+enum class LogLevel {
+    Info,
+    Warn,
+    Error,
+    Debug,
+};
 
 /**
  * @brief Ana uygulama sınıfı – tüm ImGui render ve iş mantığını yönetir
@@ -42,6 +52,9 @@ public:
     /// Çıkış istendi mi?
     [[nodiscard]] bool shouldQuit() const { return m_shouldQuit; }
 
+    /// Canlı log konsoluna satır ekle (thread-safe). Bellek şişmesini engeller.
+    void addLog(LogLevel level, const std::string& msg);
+
 private:
     // ── Tema ────────────────────────────────────────────────────────────────
     void setupTheme();
@@ -49,7 +62,9 @@ private:
     // ── UI Panelleri ────────────────────────────────────────────────────────
     void renderVideoPanel();
     void renderControlPanel();
+    void renderMissionPanel();
     void renderCalibrationPanel();
+    void renderConsolePanel();
     void renderStatusBar();
 
     // ── Aksiyonlar ──────────────────────────────────────────────────────────
@@ -77,6 +92,13 @@ private:
     bool m_shouldQuit     = false;
     int  m_activeTab      = 0;
 
+    // ── Aşama 1: Hedef sıralaması (şartname) ───────────────────────────────
+    std::array<std::string, 4> m_missionOrder{{"F16", "IHA", "HELI", "MISSILE"}};
+
+    // ── Geofencing (sanal sınır) ───────────────────────────────────────────
+    float m_panLimits[2]  = {-90.0f, 90.0f};   // derece
+    float m_tiltLimits[2] = {-10.0f, 45.0f};   // derece
+
     // ── Motor bilgisi ───────────────────────────────────────────────────────
     std::string m_motorSpeed     = "0.0 m/s";
     std::string m_motorDirection = "0 deg";
@@ -99,6 +121,17 @@ private:
     // ── Durum çubuğu ────────────────────────────────────────────────────────
     std::string m_statusMessage;
     std::chrono::steady_clock::time_point m_statusExpiry;
+
+    // ── Canlı Log Konsolu ───────────────────────────────────────────────────
+    static constexpr size_t kConsoleMaxLines = 800;
+    std::mutex m_consoleMutex;
+    std::vector<std::pair<LogLevel, std::string>> m_consoleLogs;
+    bool m_consoleAutoScroll = true;
+    bool m_consoleScrollToBottom = false;
+
+    // Telemetri durum değişimi izleme (log için)
+    bool m_prevTelStateValid = false;
+    TelemetryClient::State m_prevTelState = TelemetryClient::State::Disconnected;
 
     // ── Yapılandırma ────────────────────────────────────────────────────────
     std::string m_serverHost   = "127.0.0.1";

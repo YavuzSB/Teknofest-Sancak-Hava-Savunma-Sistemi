@@ -49,7 +49,56 @@ endif()
 # ============================================================================
 
 # --- OpenCV (DNN modülü dahil) ---
-find_package(OpenCV REQUIRED COMPONENTS core imgproc highgui videoio dnn)
+# OpenCV keşfini daha dayanıklı hale getir
+set(_opencv_candidate_dirs "")
+
+if(DEFINED OpenCV_DIR AND OpenCV_DIR)
+    list(APPEND _opencv_candidate_dirs "${OpenCV_DIR}")
+endif()
+
+if(DEFINED ENV{OpenCV_DIR} AND NOT "$ENV{OpenCV_DIR}" STREQUAL "")
+    list(APPEND _opencv_candidate_dirs "$ENV{OpenCV_DIR}")
+endif()
+
+if(DEFINED ENV{CMAKE_PREFIX_PATH} AND NOT "$ENV{CMAKE_PREFIX_PATH}" STREQUAL "")
+    string(REPLACE ";" ";" _env_prefix_paths "$ENV{CMAKE_PREFIX_PATH}")
+    list(APPEND _opencv_candidate_dirs ${_env_prefix_paths})
+endif()
+
+if(WIN32)
+    list(APPEND _opencv_candidate_dirs
+        "C:/opencv/build"
+        "C:/opencv"
+        "C:/tools/opencv/build"
+        "C:/vcpkg/installed/x64-windows/share/opencv4"
+        "C:/vcpkg/installed/x64-windows"
+    )
+endif()
+
+set(_opencv_config_found FALSE)
+foreach(_candidate IN LISTS _opencv_candidate_dirs)
+    if(EXISTS "${_candidate}/OpenCVConfig.cmake")
+        set(OpenCV_DIR "${_candidate}" CACHE PATH "Path to OpenCVConfig.cmake" FORCE)
+        set(_opencv_config_found TRUE)
+        break()
+    endif()
+    if(EXISTS "${_candidate}/opencv4/OpenCVConfig.cmake")
+        set(OpenCV_DIR "${_candidate}/opencv4" CACHE PATH "Path to OpenCVConfig.cmake" FORCE)
+        set(_opencv_config_found TRUE)
+        break()
+    endif()
+endforeach()
+
+find_package(OpenCV QUIET COMPONENTS core imgproc highgui videoio dnn)
+
+if(NOT OpenCV_FOUND)
+    message(FATAL_ERROR
+        "OpenCV bulunamadı.\n"
+        "Kontrol edilen aday dizinler: ${_opencv_candidate_dirs}\n"
+        "Lütfen OpenCV_DIR'i OpenCVConfig.cmake içeren klasöre ayarlayın\n"
+        "veya CMAKE_PREFIX_PATH'e OpenCV kurulum kökünü ekleyin."
+    )
+endif()
 
 # INTERFACE target for clean linking
 add_library(sancak_opencv INTERFACE)
@@ -117,6 +166,21 @@ endif()
 
 if(SANCAK_BUILD_COMBAT)
 
+    # --- Network Layer (UDP Video + TCP Telemetry) ---
+    add_library(sancak_network STATIC
+        src/network/udp_video_streamer.cpp
+        src/network/tcp_telemetry_server.cpp
+        src/network/telemetry_sender.cpp
+    )
+    target_link_libraries(sancak_network PUBLIC sancak_build_options)
+    if(WIN32)
+        target_link_libraries(sancak_network PUBLIC ws2_32)
+    endif()
+    if(UNIX)
+        target_link_libraries(sancak_network PUBLIC Threads::Threads)
+    endif()
+    sancak_enable_clang_tidy(sancak_network)
+
     # --- Config Manager ---
     add_library(sancak_config STATIC
         src/sancak/config_manager.cpp
@@ -155,6 +219,7 @@ if(SANCAK_BUILD_COMBAT)
     # --- Aim Solver ---
     add_library(sancak_aim STATIC
         src/sancak/aim_solver.cpp
+        src/sancak/trigger_controller.cpp
     )
     target_link_libraries(sancak_aim PUBLIC
         sancak_ballistics
@@ -181,6 +246,7 @@ if(SANCAK_BUILD_COMBAT)
     # --- Serial Communication ---
     add_library(sancak_serial STATIC
         src/sancak/serial_comm.cpp
+        src/turret_controller.cpp
     )
     target_link_libraries(sancak_serial PUBLIC sancak_config sancak_build_options)
     if(UNIX)
@@ -199,6 +265,7 @@ if(SANCAK_BUILD_COMBAT)
         sancak_tracker
         sancak_camera
         sancak_serial
+        sancak_network
         sancak_config
         sancak_opencv
         sancak_build_options
@@ -320,6 +387,7 @@ if(SANCAK_ENABLE_TESTS AND SANCAK_BUILD_COMBAT)
         tests/test_ballistics_manager.cpp
         tests/test_distance_estimator.cpp
         tests/test_target_tracker.cpp
+        tests/test_trigger_controller.cpp
         tests/test_balloon_segmentor.cpp
     )
     target_link_libraries(sancak_tests PRIVATE

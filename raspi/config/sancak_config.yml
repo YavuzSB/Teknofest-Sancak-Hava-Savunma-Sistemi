@@ -7,12 +7,73 @@
 # Çalışma zamanında --config parametresi ile özel dosya yüklenebilir.
 # ============================================================================
 
+# --- NETWORK AYARLARI ---
+networking:
+   target_pc_ip: "192.168.1.100"
+   video_port: 5005
+   telemetry_port: 5006
+   telemetry_push_port: 0 # 0 => sender kapalı (server-only, port çakışma riskini azaltır)
+   jpeg_quality: 75 # Pi 5 CPU yükü ve bant genişliği dengesi için
+
+# --- HEDEF KURALLARI ---
+# Not: Aşağıdaki değerler taslaktır; saha/şartname revizyonlarında güncellenebilir.
+targets:
+   iha:
+      min_range_m: 0.0
+      max_range_m: 15.0
+      priority: 2
+   f16:
+      min_range_m: 10.0
+      max_range_m: 15.0
+      priority: 1
+   helikopter:
+      min_range_m: 0.0
+      max_range_m: 15.0
+      priority: 3
+   balistik_fuze:
+      min_range_m: 0.0
+      max_range_m: 15.0
+      priority: 0
+
+# --- MUHAREBE KURALLARI (CEZA/PUAN) ---
+combat_rules:
+   wrong_target_penalty: -10
+   wrong_order_penalty: -5
+
+# --- GEOFENCE (MEKANİK SINIRLAR) ---
+geofence:
+   pan_deg:
+      min: -90.0
+      max: 90.0
+   tilt_deg:
+      min: -10.0
+      max: 45.0
+
+# --- IFF (DOST-DÜŞMAN RENK EŞİKLERİ) ---
+iff:
+   foe_red:
+      h_min: 0
+      h_max: 10
+      s_min: 100
+      s_max: 255
+      v_min: 100
+      v_max: 255
+   friend_blue:
+      h_min: 100
+      h_max: 140
+      s_min: 100
+      s_max: 255
+      v_min: 100
+      v_max: 255
+
 # --- KAMERA AYARLARI ---
 camera:
    device_index:    0
    frame_width:     640
    frame_height:    480
    fps_target:      30
+   h_fov_deg:       60.
+   v_fov_deg:       45.
 
 # --- YOLO26-NANO MODEL AYARLARI ---
 yolo:
@@ -92,9 +153,17 @@ ballistics:
 # --- TAKİP AYARLARI ---
 tracking:
    iou_threshold:      3.0000000000000000e-01
+   max_center_distance_px: 50.
    max_lost_frames:    15
    min_confirm_frames: 3
    velocity_smoothing: 7.0000000000000000e-01
+
+# --- TETİK DİSİPLİN AYARLARI ---
+trigger:
+   aim_tolerance_px:    15.
+   lock_frames_required: 5
+   burst_duration_ms:   500
+   cooldown_ms:         1000
 
 # --- SERİ PORT AYARLARI ---
 serial:

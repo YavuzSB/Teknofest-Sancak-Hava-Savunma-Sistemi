@@ -40,33 +40,33 @@ public:
      * @param config YOLO ayarları
      * @return Başarılı mı?
      */
-    bool initialize(const YoloConfig& config);
+    [[nodiscard]] bool initialize(const YoloConfig& config);
 
     /**
      * @brief Tek frame üzerinde çıkarım yapar
      * @param frame Giriş BGR frame
      * @return Tespit listesi
      */
-    std::vector<Detection> detect(const cv::Mat& frame);
+    [[nodiscard]] std::vector<Detection> detect(const cv::Mat& frame);
 
     /// Son çıkarım süresi (ms)
-    double lastInferenceMs() const { return last_inference_ms_; }
+    [[nodiscard]] double lastInferenceMs() const { return last_inference_ms_; }
 
     /// Model yüklü mü?
-    bool isReady() const { return ready_; }
+    [[nodiscard]] bool isReady() const { return ready_; }
 
 private:
     /// Letterbox ön-işleme (aspect ratio korunarak boyutlandırma)
-    cv::Mat letterbox(const cv::Mat& src, cv::Point2f& scale, cv::Point2f& pad);
+    static cv::Mat letterbox(const cv::Mat& src, cv::Point2f& scale, cv::Point2f& pad);
 
     /// Model çıkış tensörünü parse eder
-    std::vector<Detection> parseOutput(const cv::Mat& output,
+    [[nodiscard]] std::vector<Detection> parseOutput(const cv::Mat& output,
                                         const cv::Point2f& scale,
                                         const cv::Point2f& pad,
                                         int orig_w, int orig_h);
 
     /// TargetClass eşleştirmesi
-    TargetClass mapClassId(int class_id) const;
+    [[nodiscard]] TargetClass mapClassId(int class_id) const;
 
     cv::dnn::Net net_;
     YoloConfig   config_;

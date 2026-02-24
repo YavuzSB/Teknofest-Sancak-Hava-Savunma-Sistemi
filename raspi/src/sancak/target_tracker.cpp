@@ -18,8 +18,8 @@ void TargetTracker::initialize(const TrackingConfig& config) {
     config_ = config;
     tracks_.clear();
     next_id_ = 0;
-    SANCAK_LOG_INFO("Target Tracker başlatıldı | IoU eşik: {:.2f} | Maks kayıp: {}",
-                    config_.iou_threshold, config_.max_lost_frames);
+    SANCAK_LOG_INFO("Target Tracker başlatıldı | IoU eşik: {:.2f} | Merkez mesafe: {:.1f}px | Maks kayıp: {}",
+                    config_.iou_threshold, config_.max_center_distance_px, config_.max_lost_frames);
 }
 
 float TargetTracker::computeIoU(const cv::Rect2f& a, const cv::Rect2f& b) {
@@ -38,6 +38,18 @@ float TargetTracker::computeIoU(const cv::Rect2f& a, const cv::Rect2f& b) {
 
     if (union_area <= 0.0f) return 0.0f;
     return inter_area / union_area;
+}
+
+cv::Point2f TargetTracker::getCenter(const cv::Rect2f& r) {
+    return cv::Point2f(r.x + r.width / 2.0f, r.y + r.height / 2.0f);
+}
+
+float TargetTracker::centerDistance(const cv::Rect2f& a, const cv::Rect2f& b) {
+    const cv::Point2f ca = getCenter(a);
+    const cv::Point2f cb = getCenter(b);
+    const float dx = ca.x - cb.x;
+    const float dy = ca.y - cb.y;
+    return std::sqrt(dx * dx + dy * dy);
 }
 
 std::vector<std::pair<int, int>> TargetTracker::matchDetections(
@@ -80,7 +92,7 @@ std::vector<std::pair<int, int>> TargetTracker::matchDetections(
     return matches;
 }
 
-std::vector<TrackedTarget> TargetTracker::update(const std::vector<Detection>& detections) {
+std::vector<TrackedTarget>& TargetTracker::update(const std::vector<Detection>& detections) {
     auto matches = matchDetections(detections);
 
     // Eşleşen/eşleşmeyen indeksleri bul
@@ -94,17 +106,11 @@ std::vector<TrackedTarget> TargetTracker::update(const std::vector<Detection>& d
         auto& track = tracks_[t_idx];
 
         // Önceki merkez
-        cv::Point2f prev_center(
-            track.detection.bbox.x + track.detection.bbox.width  / 2.0f,
-            track.detection.bbox.y + track.detection.bbox.height / 2.0f
-        );
+        const cv::Point2f prev_center = getCenter(track.detection.bbox);
 
         // Yeni merkez
         const auto& det = detections[d_idx];
-        cv::Point2f new_center(
-            det.bbox.x + det.bbox.width  / 2.0f,
-            det.bbox.y + det.bbox.height / 2.0f
-        );
+        const cv::Point2f new_center = getCenter(det.bbox);
 
         // Hız hesapla (EMA)
         cv::Point2f raw_vel = new_center - prev_center;
@@ -116,6 +122,64 @@ std::vector<TrackedTarget> TargetTracker::update(const std::vector<Detection>& d
         track.detection   = det;
         track.age++;
         track.lost_frames = 0;
+    }
+
+    // Aşama 2: IoU ile eşleşmeyenler için merkez mesafesi fallback
+    // Not: Boyut/şekil ani değişince IoU düşebilir; merkez yakınlığıyla track devam ettirilir.
+    {
+        std::vector<int> unmatched_tracks;
+        unmatched_tracks.reserve(tracks_.size());
+        for (size_t t = 0; t < tracks_.size(); ++t) {
+            if (!track_matched[t]) unmatched_tracks.push_back(static_cast<int>(t));
+        }
+
+        std::vector<int> unmatched_dets;
+        unmatched_dets.reserve(detections.size());
+        for (size_t d = 0; d < detections.size(); ++d) {
+            if (!det_matched[d]) unmatched_dets.push_back(static_cast<int>(d));
+        }
+
+        struct DistCand {
+            int track_idx;
+            int det_idx;
+            float dist;
+        };
+        std::vector<DistCand> dist_candidates;
+
+        for (int t_idx : unmatched_tracks) {
+            for (int d_idx : unmatched_dets) {
+                const float dist = centerDistance(tracks_[t_idx].detection.bbox, detections[d_idx].bbox);
+                if (dist <= config_.max_center_distance_px) {
+                    dist_candidates.push_back({t_idx, d_idx, dist});
+                }
+            }
+        }
+
+        std::sort(dist_candidates.begin(), dist_candidates.end(),
+                  [](const DistCand& a, const DistCand& b) { return a.dist < b.dist; });
+
+        for (const auto& c : dist_candidates) {
+            if (track_matched[c.track_idx] || det_matched[c.det_idx]) continue;
+
+            track_matched[c.track_idx] = true;
+            det_matched[c.det_idx]     = true;
+
+            auto& track = tracks_[c.track_idx];
+
+            const cv::Point2f prev_center = getCenter(track.detection.bbox);
+            const auto& det = detections[c.det_idx];
+            const cv::Point2f new_center = getCenter(det.bbox);
+
+            // Hız hesapla (EMA)
+            cv::Point2f raw_vel = new_center - prev_center;
+            float alpha = config_.velocity_smoothing;
+            track.velocity.x = alpha * track.velocity.x + (1.0f - alpha) * raw_vel.x;
+            track.velocity.y = alpha * track.velocity.y + (1.0f - alpha) * raw_vel.y;
+
+            track.detection   = det;
+            track.age++;
+            track.lost_frames = 0;
+        }
     }
 
     // Eşleşmeyen track'ler → kayıp sayacını artır

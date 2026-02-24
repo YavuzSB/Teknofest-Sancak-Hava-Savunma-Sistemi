@@ -1,4 +1,3 @@
-
 #include "balloon_detector.hpp"
 
 #include "color_filter.hpp"

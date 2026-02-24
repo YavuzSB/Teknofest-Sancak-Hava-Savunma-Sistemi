@@ -69,12 +69,12 @@ public:
     }
 
     void setLevel(Level lvl) { min_level_ = lvl; }
-    Level getLevel() const { return min_level_; }
+    [[nodiscard]] Level getLevel() const { return min_level_; }
     void enableColor(bool enable) { use_color_ = enable; }
 
     template <typename... Args>
     void log(Level lvl, const char* file, int line, const char* fmt, Args&&... args) {
-        if (lvl < min_level_) return;
+        if (lvl < min_level_) { return; }
 
         std::ostringstream oss;
 
@@ -90,11 +90,11 @@ public:
         localtime_r(&t, &tm_buf);
 #endif
 
-        if (use_color_) oss << LevelColor(lvl);
+        if (use_color_) { oss << LevelColor(lvl); }
         oss << std::put_time(&tm_buf, "%H:%M:%S")
             << '.' << std::setfill('0') << std::setw(3) << ms.count()
             << " [" << LevelTag(lvl) << "] ";
-        if (use_color_) oss << "\033[0m";
+        if (use_color_) { oss << "\033[0m"; }
 
         // Basit format: {} yer tutucularını argümanlarla değiştir
         formatTo(oss, fmt, std::forward<Args>(args)...);
@@ -110,9 +110,10 @@ public:
         std::cerr << oss.str();
     }
 
-private:
+public:
     Logger() = default;
 
+private:
     Level min_level_ = Level::kInfo;
     bool  use_color_ = true;
     std::mutex mutex_;
@@ -120,7 +121,7 @@ private:
     static const char* extractFilename(const char* path) {
         const char* p = path;
         for (const char* s = path; *s; ++s) {
-            if (*s == '/' || *s == '\\') p = s + 1;
+            if (*s == '/' || *s == '\\') { p = s + 1; }
         }
         return p;
     }
@@ -143,7 +144,6 @@ private:
     }
 };
 
-} // namespace log
 } // namespace sancak
 
 // ============================================================================

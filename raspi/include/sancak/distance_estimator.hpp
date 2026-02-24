@@ -35,7 +35,7 @@ public:
      * @param balloon_radius_px Balonun piksel yarıçapı
      * @return Mesafe tahmini
      */
-    DistanceEstimate fromBalloonRadius(float balloon_radius_px) const;
+    [[nodiscard]] DistanceEstimate fromBalloonRadius(float balloon_radius_px) const;
 
     /**
      * @brief Bounding box yüksekliğinden mesafe tahmin et
@@ -43,13 +43,13 @@ public:
      * @param real_height_m   Hedefin gerçek yüksekliği (metre)
      * @return Mesafe tahmini
      */
-    DistanceEstimate fromBboxHeight(float bbox_height_px,
+    [[nodiscard]] DistanceEstimate fromBboxHeight(float bbox_height_px,
                                      float real_height_m) const;
 
     /**
      * @brief Her iki yöntemden ortalama mesafe
      */
-    DistanceEstimate combined(float balloon_radius_px,
+    [[nodiscard]] DistanceEstimate combined(float balloon_radius_px,
                                float bbox_height_px,
                                float real_height_m) const;
 

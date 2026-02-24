@@ -13,6 +13,8 @@
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
+#include <sstream>
+#include <iomanip>
 
 namespace teknofest {
 
@@ -40,11 +42,27 @@ App::~App() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 bool App::initialize() {
+    auto readEnv = [](const char* key) -> std::string {
+#ifdef _WIN32
+        char* value = nullptr;
+        size_t len = 0;
+        if (_dupenv_s(&value, &len, key) != 0 || value == nullptr) {
+            return {};
+        }
+        std::string out(value);
+        free(value);
+        return out;
+#else
+        if (const char* val = std::getenv(key)) return std::string(val);
+        return {};
+#endif
+    };
+
     // Ortam değişkenlerinden yapılandırma oku
-    if (const char* h  = std::getenv("RASPI_HOST"))      m_serverHost    = h;
-    if (const char* vp = std::getenv("VIDEO_UDP_PORT"))   m_videoPort     = static_cast<uint16_t>(std::atoi(vp));
-    if (const char* tp = std::getenv("TEL_TCP_PORT"))     m_telemetryPort = static_cast<uint16_t>(std::atoi(tp));
-    if (const char* ap = std::getenv("ARDUINO_PORT"))     m_arduinoPort   = ap;
+    if (const auto h = readEnv("RASPI_HOST"); !h.empty()) m_serverHost = h;
+    if (const auto vp = readEnv("VIDEO_UDP_PORT"); !vp.empty()) m_videoPort = static_cast<uint16_t>(std::atoi(vp.c_str()));
+    if (const auto tp = readEnv("TEL_TCP_PORT"); !tp.empty()) m_telemetryPort = static_cast<uint16_t>(std::atoi(tp.c_str()));
+    if (const auto ap = readEnv("ARDUINO_PORT"); !ap.empty()) m_arduinoPort = ap;
 
     setupTheme();
 
@@ -57,6 +75,17 @@ bool App::initialize() {
 
     // Telemetri istemcisi
     m_telemetry = std::make_unique<TelemetryClient>(m_serverHost, m_telemetryPort);
+    m_telemetry->setLogCallback([this](int level, const std::string& msg) {
+        LogLevel lvl = LogLevel::Info;
+        switch (level) {
+        case 0: lvl = LogLevel::Info;  break;
+        case 1: lvl = LogLevel::Warn;  break;
+        case 2: lvl = LogLevel::Error; break;
+        case 3: lvl = LogLevel::Debug; break;
+        default: lvl = LogLevel::Info; break;
+        }
+        this->addLog(lvl, msg);
+    });
     m_telemetry->start();
 
     // Arduino (port belirtilmişse)
@@ -76,6 +105,22 @@ void App::shutdown() {
     if (m_videoTexture) {
         TextureHelper::destroy(m_videoTexture);
         m_videoTexture = 0;
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Canlı Log Konsolu
+// ═══════════════════════════════════════════════════════════════════════════
+
+void App::addLog(LogLevel level, const std::string& msg) {
+    std::lock_guard<std::mutex> lock(m_consoleMutex);
+    m_consoleLogs.emplace_back(level, msg);
+    if (m_consoleLogs.size() > kConsoleMaxLines) {
+        const size_t extra = m_consoleLogs.size() - kConsoleMaxLines;
+        m_consoleLogs.erase(m_consoleLogs.begin(), m_consoleLogs.begin() + static_cast<std::ptrdiff_t>(extra));
+    }
+    if (m_consoleAutoScroll) {
+        m_consoleScrollToBottom = true;
     }
 }
 
@@ -265,6 +310,16 @@ void App::render(GLFWwindow* window) {
             renderControlPanel();
             ImGui::EndTabItem();
         }
+        if (ImGui::BeginTabItem("GOREV")) {
+            m_activeTab = 2;
+            renderMissionPanel();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("KONSOL")) {
+            m_activeTab = 3;
+            renderConsolePanel();
+            ImGui::EndTabItem();
+        }
         if (ImGui::BeginTabItem("KALIBRASYON")) {
             m_activeTab = 1;
             renderCalibrationPanel();
@@ -309,6 +364,61 @@ void App::renderVideoPanel() {
         ImGui::Image(
             static_cast<ImTextureID>(static_cast<uintptr_t>(m_videoTexture)),
             ImVec2(displayW, displayH));
+
+        // HUD Overlay: Telemetri AimResult ile crosshair ve bilgi etiketi çiz
+        if (m_telemetry && m_overlayEnabled) {
+            teknofest::AimResult aim;
+            if (m_telemetry->getLatestAimResult(aim) && aim.valid) {
+                // Frame koordinatlarını ImGui paneline orantıla
+                float scaleX = displayW / static_cast<float>(m_videoWidth);
+                float scaleY = displayH / static_cast<float>(m_videoHeight);
+                float cx = aim.corrected_x * scaleX + offX;
+                float cy = aim.corrected_y * scaleY + offY;
+
+                ImDrawList* draw = ImGui::GetWindowDrawList();
+                ImVec2 panelPos = ImGui::GetCursorScreenPos();
+                // ImGui::Image sonrası cursor panelin altına iner, üst köşe için -displayH kadar yukarı git
+                panelPos.y -= displayH;
+
+                ImVec2 crosshairPos(panelPos.x + cx, panelPos.y + cy);
+                ImU32 color = IM_COL32(0, 255, 65, 255); // Neon yeşil
+                float crossLen = 18.0f;
+                float crossThick = 2.0f;
+                // Crosshair çiz
+                draw->AddLine(ImVec2(crosshairPos.x - crossLen, crosshairPos.y), ImVec2(crosshairPos.x + crossLen, crosshairPos.y), color, crossThick);
+                draw->AddLine(ImVec2(crosshairPos.x, crosshairPos.y - crossLen), ImVec2(crosshairPos.x, crosshairPos.y + crossLen), color, crossThick);
+
+                // Info label
+                char label[64];
+                snprintf(label, sizeof(label), "ID:%d  (%.0f,%.0f)", aim.class_id, aim.corrected_x, aim.corrected_y);
+                ImVec2 textSz = ImGui::CalcTextSize(label);
+                ImVec2 labelPos(crosshairPos.x - textSz.x * 0.5f, crosshairPos.y - crossLen - textSz.y - 6.0f);
+                const float padX = 4.0f;
+                const float padY = 2.0f;
+                const ImVec2 rectMin(labelPos.x - padX, labelPos.y - padY);
+                const ImVec2 rectMax(labelPos.x + textSz.x + padX, labelPos.y + textSz.y + padY);
+                draw->AddRectFilled(rectMin, rectMax, IM_COL32(16,20,28,220), 4.0f);
+                draw->AddText(labelPos, color, label);
+            } else if (m_telemetry) {
+                // Geçersiz nişan: kırmızımsı crosshair (son bilinen nokta varsa)
+                teknofest::AimResult lastAim;
+                if (m_telemetry->getLatestAimResult(lastAim)) {
+                    float scaleX = displayW / static_cast<float>(m_videoWidth);
+                    float scaleY = displayH / static_cast<float>(m_videoHeight);
+                    float cx = lastAim.corrected_x * scaleX + offX;
+                    float cy = lastAim.corrected_y * scaleY + offY;
+                    ImDrawList* draw = ImGui::GetWindowDrawList();
+                    ImVec2 panelPos = ImGui::GetCursorScreenPos();
+                    panelPos.y -= displayH;
+                    ImVec2 crosshairPos(panelPos.x + cx, panelPos.y + cy);
+                    ImU32 color = IM_COL32(255, 60, 60, 220);
+                    float crossLen = 14.0f;
+                    float crossThick = 2.0f;
+                    draw->AddLine(ImVec2(crosshairPos.x - crossLen, crosshairPos.y), ImVec2(crosshairPos.x + crossLen, crosshairPos.y), color, crossThick);
+                    draw->AddLine(ImVec2(crosshairPos.x, crosshairPos.y - crossLen), ImVec2(crosshairPos.x, crosshairPos.y + crossLen), color, crossThick);
+                }
+            }
+        }
     } else {
         // Yer tutucu
         const ImVec2 textSz = ImGui::CalcTextSize("Beklemede - video yok");
@@ -438,6 +548,153 @@ void App::renderCalibrationPanel() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+//  Canlı Log Konsolu Paneli
+// ═══════════════════════════════════════════════════════════════════════════
+
+void App::renderConsolePanel() {
+    const float fullW = ImGui::GetContentRegionAvail().x;
+
+    // Üst bar
+    if (ImGui::Button("Temizle", ImVec2(120.0f, 0.0f))) {
+        std::lock_guard<std::mutex> lock(m_consoleMutex);
+        m_consoleLogs.clear();
+        m_consoleScrollToBottom = true;
+    }
+    ImGui::SameLine();
+    ImGui::Checkbox("Auto-Scroll", &m_consoleAutoScroll);
+    ImGui::SameLine();
+    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "(%zu/%zu)", m_consoleLogs.size(), kConsoleMaxLines);
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // Scrollable log bölgesi
+    ImGui::BeginChild("LogRegion", ImVec2(fullW, 0.0f), true, ImGuiWindowFlags_HorizontalScrollbar);
+
+    // Logları güvenli şekilde snapshot al
+    std::vector<std::pair<LogLevel, std::string>> snapshot;
+    snapshot.reserve(256);
+    {
+        std::lock_guard<std::mutex> lock(m_consoleMutex);
+        snapshot = m_consoleLogs;
+    }
+
+    for (const auto& [lvl, line] : snapshot) {
+        ImVec4 col(0.95f, 0.95f, 0.95f, 1.0f);
+        switch (lvl) {
+        case LogLevel::Info:  col = ImVec4(0.95f, 0.95f, 0.95f, 1.0f); break;
+        case LogLevel::Warn:  col = ImVec4(1.00f, 0.85f, 0.10f, 1.0f); break;
+        case LogLevel::Error: col = ImVec4(1.00f, 0.25f, 0.25f, 1.0f); break;
+        case LogLevel::Debug: col = ImVec4(0.65f, 0.85f, 1.00f, 1.0f); break;
+        }
+        ImGui::PushStyleColor(ImGuiCol_Text, col);
+        ImGui::TextUnformatted(line.c_str());
+        ImGui::PopStyleColor();
+    }
+
+    // Kullanıcı yukarı kaydırdıysa auto-scroll'u durdur
+    const float scrollY = ImGui::GetScrollY();
+    const float scrollMaxY = ImGui::GetScrollMaxY();
+    const bool atBottom = (scrollMaxY <= 0.0f) || (scrollY >= scrollMaxY - 2.0f);
+    if (m_consoleAutoScroll && !atBottom && ImGui::IsWindowHovered() && (ImGui::GetIO().MouseWheel != 0.0f)) {
+        m_consoleAutoScroll = false;
+    }
+
+    if (m_consoleAutoScroll && m_consoleScrollToBottom) {
+        ImGui::SetScrollHereY(1.0f);
+        m_consoleScrollToBottom = false;
+    }
+
+    ImGui::EndChild();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Görev / Geofencing Paneli
+// ═══════════════════════════════════════════════════════════════════════════
+
+void App::renderMissionPanel() {
+    const float fullW = ImGui::GetContentRegionAvail().x;
+
+    // ── Aşama 1: Hedef sıralaması ──────────────────────────────────────────
+    if (ImGui::CollapsingHeader("Asama 1: Hedef Siralamasi", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.255f, 1.0f), "GOREV ONCELIGI");
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        for (int i = 0; i < static_cast<int>(m_missionOrder.size()); ++i) {
+            ImGui::PushID(i);
+
+            ImGui::Text("%d.", i + 1);
+            ImGui::SameLine(40);
+            ImGui::TextColored(ImVec4(0.85f, 0.95f, 0.90f, 1.0f), "%s", m_missionOrder[i].c_str());
+
+            ImGui::SameLine(fullW - 140.0f);
+            const bool canUp = (i > 0);
+            const bool canDown = (i < static_cast<int>(m_missionOrder.size()) - 1);
+
+            if (!canUp) ImGui::BeginDisabled();
+            if (ImGui::SmallButton("Yukari")) {
+                std::swap(m_missionOrder[i], m_missionOrder[i - 1]);
+            }
+            if (!canUp) ImGui::EndDisabled();
+
+            ImGui::SameLine();
+
+            if (!canDown) ImGui::BeginDisabled();
+            if (ImGui::SmallButton("Asagi")) {
+                std::swap(m_missionOrder[i], m_missionOrder[i + 1]);
+            }
+            if (!canDown) ImGui::EndDisabled();
+
+            ImGui::PopID();
+        }
+
+        ImGui::Spacing();
+        if (ImGui::Button("Siralamayi Gonder", ImVec2(fullW, 40.0f))) {
+            std::ostringstream oss;
+            oss << "<ORDER:";
+            for (size_t i = 0; i < m_missionOrder.size(); ++i) {
+                if (i) oss << ',';
+                oss << m_missionOrder[i];
+            }
+            oss << '>';
+            if (m_telemetry) m_telemetry->sendCommand(oss.str());
+            setStatus("Gorev siralamasi gonderildi", 1.2f);
+        }
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // ── Geofencing ─────────────────────────────────────────────────────────
+    if (ImGui::CollapsingHeader("Geofencing (Sanal Sinir) Ayarlari", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Text("Pan limitleri (deg)");
+        ImGui::PushItemWidth(fullW);
+        ImGui::SliderFloat2("##pan_limits", m_panLimits, -180.0f, 180.0f, "%.1f");
+
+        ImGui::Spacing();
+        ImGui::Text("Tilt limitleri (deg)");
+        ImGui::SliderFloat2("##tilt_limits", m_tiltLimits, -45.0f, 90.0f, "%.1f");
+        ImGui::PopItemWidth();
+
+        // Kullanıcı min/max'ı ters girerse düzelt
+        if (m_panLimits[0] > m_panLimits[1]) std::swap(m_panLimits[0], m_panLimits[1]);
+        if (m_tiltLimits[0] > m_tiltLimits[1]) std::swap(m_tiltLimits[0], m_tiltLimits[1]);
+
+        ImGui::Spacing();
+        if (ImGui::Button("Sinirlari Uygula", ImVec2(fullW, 40.0f))) {
+            char cmd[128];
+            std::snprintf(cmd, sizeof(cmd), "<GEOFENCE:%.1f,%.1f,%.1f,%.1f>",
+                          m_panLimits[0], m_panLimits[1], m_tiltLimits[0], m_tiltLimits[1]);
+            if (m_telemetry) m_telemetry->sendCommand(cmd);
+            setStatus("Geofence gonderildi", 1.2f);
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 //  Durum Çubuğu
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -463,7 +720,32 @@ void App::renderStatusBar() {
     // Telemetri durumu
     std::string telState = "Telemetri: ";
     if (m_telemetry) {
-        switch (m_telemetry->getState()) {
+        const auto cur = m_telemetry->getState();
+
+        // Durum değişimini logla
+        if (!m_prevTelStateValid || cur != m_prevTelState) {
+            m_prevTelStateValid = true;
+            m_prevTelState = cur;
+            switch (cur) {
+            case TelemetryClient::State::Connected:
+                addLog(LogLevel::Info, "Telemetri baglandi");
+                break;
+            case TelemetryClient::State::Connecting:
+                addLog(LogLevel::Info, "Telemetri baglaniyor...");
+                break;
+            case TelemetryClient::State::Retrying:
+                addLog(LogLevel::Warn, "Telemetri yeniden deneniyor");
+                break;
+            case TelemetryClient::State::Disconnected:
+                addLog(LogLevel::Error, "Telemetri baglantisi koptu");
+                break;
+            case TelemetryClient::State::Stopped:
+                addLog(LogLevel::Warn, "Telemetri durduruldu");
+                break;
+            }
+        }
+
+        switch (cur) {
         case TelemetryClient::State::Disconnected: telState += "Bagli degil";       break;
         case TelemetryClient::State::Connecting:   telState += "Baglaniyor...";     break;
         case TelemetryClient::State::Connected:    telState += "Bagli";             break;

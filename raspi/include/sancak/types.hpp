@@ -114,8 +114,8 @@ struct BalloonResult {
 
 /// Mesafe tahmini sonucu
 struct DistanceEstimate {
-    float distance_m    = 0.0f;  ///< Tahmini mesafe (metre)
-    float confidence    = 0.0f;  ///< Tahmin güveni
+    float distance_m    = 0.0F;  ///< Tahmini mesafe (metre)
+    float confidence    = 0.0F;  ///< Tahmin güveni
 };
 
 /// Balistik düzeltme vektörü
@@ -132,7 +132,7 @@ struct AimPoint {
     cv::Point2f raw_center;      ///< Balonun ham merkezi
     cv::Point2f corrected;       ///< Düzeltilmiş nişan noktası
     BallisticCorrection correction;  ///< Uygulanan düzeltmeler
-    float distance_m = 0.0f;    ///< Tahmini mesafe
+    float distance_m = 0.0F;    ///< Tahmini mesafe
     bool  valid = false;         ///< Geçerli nişan mı?
 };
 

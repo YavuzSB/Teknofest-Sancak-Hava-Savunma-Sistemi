@@ -44,12 +44,12 @@ BalloonResult BalloonSegmentor::segment(const cv::Mat& frame, const cv::Rect2f& 
     int x2 = std::min(frame.cols, static_cast<int>(bbox.x + bbox.width));
     int y2 = std::min(frame.rows, static_cast<int>(bbox.y + bbox.height));
 
-    if (x2 <= x1 || y2 <= y1) return result;
+    if (x2 <= x1 || y2 <= y1) { return result; }
 
     cv::Rect roi(x1, y1, x2 - x1, y2 - y1);
     cv::Mat crop = frame(roi);
 
-    if (crop.empty()) return result;
+    if (crop.empty()) { return result; }
 
     // HSV'ye dönüştür
     cv::Mat hsv;
@@ -65,7 +65,7 @@ BalloonResult BalloonSegmentor::segment(const cv::Mat& frame, const cv::Rect2f& 
     std::vector<std::vector<cv::Point>> contours;
     cv::findContours(mask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
 
-    if (contours.empty()) return result;
+    if (contours.empty()) { return result; }
 
     // En büyük konturu bul
     auto best_it = std::max_element(contours.begin(), contours.end(),
@@ -75,7 +75,7 @@ BalloonResult BalloonSegmentor::segment(const cv::Mat& frame, const cv::Rect2f& 
     );
 
     double area = cv::contourArea(*best_it);
-    if (area < 50.0) return result;  // Çok küçük → gürültü
+    if (area < 50.0F) { return result; }  // Çok küçük → gürültü
 
     // Minimum çevreleyen daire
     cv::Point2f center;
@@ -83,7 +83,7 @@ BalloonResult BalloonSegmentor::segment(const cv::Mat& frame, const cv::Rect2f& 
     cv::minEnclosingCircle(*best_it, center, radius);
 
     // Yarıçap kontrolü
-    if (radius < config_.min_radius_px || radius > config_.max_radius_px) return result;
+    if (radius < config_.min_radius_px || radius > config_.max_radius_px) { return result; }
 
     // Dairesellik kontrolü
     double perimeter = cv::arcLength(*best_it, true);
@@ -91,7 +91,7 @@ BalloonResult BalloonSegmentor::segment(const cv::Mat& frame, const cv::Rect2f& 
         ? (4.0 * CV_PI * area) / (perimeter * perimeter)
         : 0.0;
 
-    if (circularity < config_.min_circularity) return result;
+    if (circularity < config_.min_circularity) { return result; }
 
     // Global koordinatlara dönüştür
     result.found  = true;

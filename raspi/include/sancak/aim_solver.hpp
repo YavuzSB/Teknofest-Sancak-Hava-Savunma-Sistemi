@@ -47,7 +47,7 @@ public:
      * @param frame_size Frame boyutu
      * @return AimPoint  Hesaplanmış nişan noktası
      */
-    AimPoint solve(const BalloonResult& balloon,
+    [[nodiscard]] AimPoint solve(const BalloonResult& balloon,
                    const Detection& detection,
                    const cv::Point2f& velocity,
                    double fps,
@@ -62,8 +62,8 @@ public:
 
 private:
     /// Noktayı frame sınırları içinde tut
-    cv::Point2f clampToFrame(const cv::Point2f& pt,
-                              const cv::Size& frame_size) const;
+    static cv::Point2f clampToFrame(const cv::Point2f& pt,
+                              const cv::Size& frame_size);
 
     BallisticsManager ballistics_;
     DistanceEstimator distance_;
