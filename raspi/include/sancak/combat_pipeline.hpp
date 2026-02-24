@@ -32,6 +32,7 @@
 #include "network/telemetry_sender.hpp"
 
 #include <memory>
+#include <chrono>
 
 namespace sancak {
 
@@ -52,6 +53,9 @@ namespace sancak {
 class CombatPipeline {
 public:
     explicit CombatPipeline(INetworkSender* net = nullptr) : net_sender_(net) {}
+
+    // Kamera donma koruması (Watchdog)
+    std::chrono::steady_clock::time_point last_valid_frame_time_;
 
     /**
      * @brief Tüm modülleri başlat

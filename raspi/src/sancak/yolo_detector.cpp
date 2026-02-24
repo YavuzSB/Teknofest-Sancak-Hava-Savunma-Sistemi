@@ -25,6 +25,13 @@ bool YoloDetector::initialize(const YoloConfig& config) {
         return false;
     }
 
+    // ARM64/ONNX Runtime optimizasyonları için (OpenCV DNN yerine doğrudan Ort::SessionOptions kullanılırsa):
+    // Ort::SessionOptions session_options;
+    // session_options.SetIntraOpNumThreads(config_.num_threads);
+    // session_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+    // session_options.SetExecutionMode(ExecutionMode::ORT_SEQUENTIAL);
+    // (OpenCV DNN ile thread kontrolü doğrudan yapılamaz, ONNX Runtime'a geçişte bu kod aktif edilmeli)
+
     // Backend seçimi
     if (config_.use_cuda) {
         net_.setPreferableBackend(cv::dnn::DNN_BACKEND_CUDA);
@@ -76,9 +83,11 @@ std::vector<Detection> YoloDetector::detect(const cv::Mat& frame) {
 
     // 1. Letterbox ön-işleme
     cv::Point2f scale, pad;
+    // Letterbox fonksiyonu zaten yeni mat döndürüyor, gereksiz kopya yok.
     cv::Mat letterboxed = letterbox(frame, scale, pad);
 
     // 2. Blob oluştur (BGR→RGB, normalize 0-1, CHW)
+    // OpenCV DNN ile minimum kopya: doğrudan letterboxed kullanılıyor.
     cv::Mat blob = cv::dnn::blobFromImage(letterboxed, 1.0 / 255.0,
                                            cv::Size(config_.input_size, config_.input_size),
                                            cv::Scalar(0, 0, 0), true, false, CV_32F);

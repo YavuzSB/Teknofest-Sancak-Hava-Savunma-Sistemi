@@ -86,7 +86,15 @@ bool ConfigManager::loadFromFile(const std::string& path) {
         if (!fs["trigger"].empty()) {
             auto node = fs["trigger"];
             if (!node["aim_tolerance_px"].empty()) node["aim_tolerance_px"] >> config_.trigger.aim_tolerance_px;
-            if (!node["lock_frames_required"].empty()) node["lock_frames_required"] >> config_.trigger.lock_frames_required;
+            if (!node["lock_duration_ms"].empty()) {
+                node["lock_duration_ms"] >> config_.trigger.lock_duration_ms;
+            } else if (!node["lock_frames_required"].empty()) {
+                // Geriye dönük uyumluluk: frame sayısını süreye yaklaşık çevir.
+                // Varsayılan 30 FPS varsayımı ile: ms ~= frames * (1000 / 30)
+                int legacy_frames = 0;
+                node["lock_frames_required"] >> legacy_frames;
+                config_.trigger.lock_duration_ms = std::max(0, legacy_frames) * 33;
+            }
             if (!node["burst_duration_ms"].empty()) node["burst_duration_ms"] >> config_.trigger.burst_duration_ms;
             if (!node["cooldown_ms"].empty()) node["cooldown_ms"] >> config_.trigger.cooldown_ms;
         }
@@ -305,7 +313,7 @@ bool ConfigManager::saveToFile(const std::string& path) const {
         // --- Trigger Controller ---
         fs << "trigger" << "{";
         fs << "aim_tolerance_px" << config_.trigger.aim_tolerance_px;
-        fs << "lock_frames_required" << config_.trigger.lock_frames_required;
+        fs << "lock_duration_ms" << config_.trigger.lock_duration_ms;
         fs << "burst_duration_ms" << config_.trigger.burst_duration_ms;
         fs << "cooldown_ms" << config_.trigger.cooldown_ms;
         fs << "}";

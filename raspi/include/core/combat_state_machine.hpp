@@ -10,6 +10,7 @@ struct TrackedTarget {
     int id = -1;
     TargetClass target_class = TargetClass::Unknown;
     Affiliation affiliation = Affiliation::Unknown;
+    bool is_lost = false;
     float distance_m = 0.0f;
     float pan_deg = 0.0f;
     float tilt_deg = 0.0f;
@@ -64,6 +65,11 @@ public:
             }
         }
         if (!best) {
+            return {CombatState::Searching, -1};
+        }
+
+        // Lost target failsafe: hedef kadrajda değilse (YOLO görmüyorsa) asla Engaging.
+        if (best->is_lost) {
             return {CombatState::Searching, -1};
         }
         // FOE ise ve menzildeyse ENGAGING

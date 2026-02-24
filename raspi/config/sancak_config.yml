@@ -161,7 +161,7 @@ tracking:
 # --- TETİK DİSİPLİN AYARLARI ---
 trigger:
    aim_tolerance_px:    15.
-   lock_frames_required: 5
+   lock_duration_ms: 150
    burst_duration_ms:   500
    cooldown_ms:         1000
 

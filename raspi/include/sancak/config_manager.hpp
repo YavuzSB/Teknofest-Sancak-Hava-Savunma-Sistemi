@@ -45,7 +45,7 @@ struct GeofenceConfig {
 /// Tetik disiplin motoru ayarları
 struct TriggerConfig {
     float aim_tolerance_px = 15.0f;
-    int   lock_frames_required = 5;
+    int   lock_duration_ms = 150;
     int   burst_duration_ms = 500;
     int   cooldown_ms = 1000;
 };
@@ -68,7 +68,8 @@ struct IffConfig {
 /// YOLO model ayarları
 struct YoloConfig {
     std::string model_path      = "models/best.onnx";
-    int         input_size      = kModelInputSize;
+    int         input_size      = 416; // ARM için optimize varsayılan
+    int         num_threads     = 4;   // Pi 5 için çekirdek sayısı
     float       conf_threshold  = 0.45f;
     float       nms_threshold   = 0.50f;
     bool        use_cuda        = false;   ///< GPU varsa CUDA backend

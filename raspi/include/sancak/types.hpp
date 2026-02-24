@@ -13,6 +13,7 @@
 #include <string>
 #include <vector>
 #include <optional>
+#include <deque>
 #include <chrono>
 #include <cstdint>
 
@@ -165,6 +166,7 @@ struct INetworkSender {
 struct TrackedTarget {
     int            track_id = -1;     ///< Takip kimliği
     Detection      detection;         ///< Güncel tespit
+    std::deque<Affiliation> affiliation_history; ///< IFF majority voting tamponu (son N frame)
     BalloonResult  balloon;           ///< Balon bulgusu
     AimPoint       aim;               ///< Nişan noktası
     cv::Point2f    velocity;          ///< Hız vektörü (px/frame)

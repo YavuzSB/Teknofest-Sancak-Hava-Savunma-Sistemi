@@ -25,11 +25,11 @@ public:
 
     /// @brief Parametrelerle başlat.
     /// @param aim_tolerance_px Crosshair-target merkez mesafe eşiği (px)
-    /// @param lock_frames_required Ateş öncesi ardışık kilit frame sayısı
+    /// @param lock_duration_ms Ateş öncesi hedefin tolerans içinde kalma süresi (ms)
     /// @param burst_duration_ms Ateşin açık kalacağı süre (ms)
     /// @param cooldown_ms İki atış arası bekleme süresi (ms)
     void initialize(float aim_tolerance_px,
-                    int lock_frames_required,
+                    int lock_duration_ms,
                     int burst_duration_ms,
                     int cooldown_ms);
 
@@ -45,12 +45,12 @@ private:
     static float distancePx(const cv::Point2f& a, const cv::Point2f& b);
 
     float aim_tolerance_px_ = 15.0f;
-    int lock_frames_required_ = 5;
+    std::chrono::milliseconds lock_duration_{150};
     std::chrono::milliseconds burst_duration_{500};
     std::chrono::milliseconds cooldown_{1000};
 
     State state_ = State::SEARCHING;
-    int locked_frames_ = 0;
+    std::chrono::steady_clock::time_point lock_start_time_{};
     std::chrono::steady_clock::time_point state_start_{};
 };
 

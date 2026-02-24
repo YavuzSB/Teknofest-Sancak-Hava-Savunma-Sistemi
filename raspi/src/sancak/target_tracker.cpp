@@ -14,6 +14,35 @@
 
 namespace sancak {
 
+namespace {
+constexpr std::size_t kAffiliationHistoryMax = 5;
+
+Affiliation majorityAffiliation(const std::deque<Affiliation>& hist, Affiliation fallback) {
+    int friend_count = 0;
+    int foe_count = 0;
+    int unknown_count = 0;
+    for (Affiliation a : hist) {
+        switch (a) {
+            case Affiliation::Friend:  friend_count++; break;
+            case Affiliation::Foe:     foe_count++; break;
+            default:                   unknown_count++; break;
+        }
+    }
+
+    // Mode seçimi; eşitlikte önceki değeri koru (hysteresis)
+    if (friend_count > foe_count && friend_count > unknown_count) {
+        return Affiliation::Friend;
+    }
+    if (foe_count > friend_count && foe_count > unknown_count) {
+        return Affiliation::Foe;
+    }
+    if (unknown_count > friend_count && unknown_count > foe_count) {
+        return Affiliation::Unknown;
+    }
+    return fallback;
+}
+}
+
 void TargetTracker::initialize(const TrackingConfig& config) {
     config_ = config;
     tracks_.clear();
@@ -105,6 +134,8 @@ std::vector<TrackedTarget>& TargetTracker::update(const std::vector<Detection>& 
 
         auto& track = tracks_[t_idx];
 
+        const Affiliation prev_aff = track.detection.affiliation;
+
         // Önceki merkez
         const cv::Point2f prev_center = getCenter(track.detection.bbox);
 
@@ -118,8 +149,15 @@ std::vector<TrackedTarget>& TargetTracker::update(const std::vector<Detection>& 
         track.velocity.x = alpha * track.velocity.x + (1.0f - alpha) * raw_vel.x;
         track.velocity.y = alpha * track.velocity.y + (1.0f - alpha) * raw_vel.y;
 
+        // IFF Majority Voting: ham IFF sonucunu buffer'a ekle, kararlı kimliği ata
+        track.affiliation_history.push_back(det.affiliation);
+        while (track.affiliation_history.size() > kAffiliationHistoryMax) {
+            track.affiliation_history.pop_front();
+        }
+
         // Tespiti güncelle
         track.detection   = det;
+        track.detection.affiliation = majorityAffiliation(track.affiliation_history, prev_aff);
         track.age++;
         track.lost_frames = 0;
     }
@@ -166,6 +204,8 @@ std::vector<TrackedTarget>& TargetTracker::update(const std::vector<Detection>& 
 
             auto& track = tracks_[c.track_idx];
 
+            const Affiliation prev_aff = track.detection.affiliation;
+
             const cv::Point2f prev_center = getCenter(track.detection.bbox);
             const auto& det = detections[c.det_idx];
             const cv::Point2f new_center = getCenter(det.bbox);
@@ -176,7 +216,13 @@ std::vector<TrackedTarget>& TargetTracker::update(const std::vector<Detection>& 
             track.velocity.x = alpha * track.velocity.x + (1.0f - alpha) * raw_vel.x;
             track.velocity.y = alpha * track.velocity.y + (1.0f - alpha) * raw_vel.y;
 
+            track.affiliation_history.push_back(det.affiliation);
+            while (track.affiliation_history.size() > kAffiliationHistoryMax) {
+                track.affiliation_history.pop_front();
+            }
+
             track.detection   = det;
+            track.detection.affiliation = majorityAffiliation(track.affiliation_history, prev_aff);
             track.age++;
             track.lost_frames = 0;
         }
@@ -195,6 +241,8 @@ std::vector<TrackedTarget>& TargetTracker::update(const std::vector<Detection>& 
             TrackedTarget nt;
             nt.track_id    = nextTrackId();
             nt.detection   = detections[d];
+            nt.affiliation_history.clear();
+            nt.affiliation_history.push_back(detections[d].affiliation);
             nt.velocity    = {0.0f, 0.0f};
             nt.age         = 1;
             nt.lost_frames = 0;

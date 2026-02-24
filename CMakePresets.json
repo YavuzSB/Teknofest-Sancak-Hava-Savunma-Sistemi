@@ -39,6 +39,8 @@
       "inherits": "base",
       "generator": "Ninja Multi-Config",
       "cacheVariables": {
+        "SANCAK_BUILD_PC": "ON",
+        "SANCAK_BUILD_RASPI": "OFF",
         "SANCAK_ENABLE_TESTS": "ON",
         "SANCAK_ENABLE_CLANG_TIDY": "OFF"
       }
@@ -48,6 +50,8 @@
       "inherits": "base",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
+        "SANCAK_BUILD_PC": "ON",
+        "SANCAK_BUILD_RASPI": "OFF",
         "SANCAK_ENABLE_TESTS": "ON",
         "SANCAK_ENABLE_CLANG_TIDY": "OFF",
         "CMAKE_C_COMPILER": "C:/msys64/ucrt64/bin/gcc.exe",

@@ -108,7 +108,7 @@ bool CombatPipeline::initialize(const SystemConfig& config) {
     // 4.1 Trigger Controller
     trigger_controller_.initialize(
         config_.trigger.aim_tolerance_px,
-        config_.trigger.lock_frames_required,
+        config_.trigger.lock_duration_ms,
         config_.trigger.burst_duration_ms,
         config_.trigger.cooldown_ms);
 
@@ -172,6 +172,7 @@ bool CombatPipeline::initialize(const SystemConfig& config) {
 
     state_ = PipelineState::kIdle;
     last_frame_time_ = SteadyClock::now();
+    last_valid_frame_time_ = SteadyClock::now();
 
     SANCAK_LOG_INFO("Pipeline başlatıldı | Mod: {} | Otonom: {}",
                     config_.headless ? "HEADLESS" : "DISPLAY",
@@ -185,6 +186,13 @@ PipelineOutput CombatPipeline::processFrame(const cv::Mat& frame) {
     PipelineOutput output;
     output.display_frame = frame.clone();
     output.fps = updateFps();
+
+    // Kamera Watchdog (Fail-Safe)
+    const auto now = std::chrono::steady_clock::now();
+    const bool frame_ok = !frame.empty();
+    if (frame_ok) {
+        last_valid_frame_time_ = now;
+    }
 
     double inference_ms = 0.0;
     double aim_solve_ms = 0.0;
@@ -235,6 +243,21 @@ PipelineOutput CombatPipeline::processFrame(const cv::Mat& frame) {
         net_frame_id_++;
         return output;
     };
+
+    const auto ms_since_last = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_valid_frame_time_).count();
+    if (ms_since_last > 500) {
+        SANCAK_LOG_ERROR("Kamera sinyali koptu/dondu! FAIL-SAFE devrede! ({} ms)", ms_since_last);
+        trigger_controller_.reset();
+        tracker_.reset();
+        telem_state = static_cast<std::uint8_t>(core::CombatState::SafeLock);
+        state_ = PipelineState::kIdle;
+        output.state = state_;
+        if (turret_controller_) {
+            turret_controller_->sendSafeLock();
+            turret_controller_->sendCommand(current_pan_deg_, current_tilt_deg_, false);
+        }
+        return finalize();
+    }
 
     if (frame.empty()) {
         state_ = PipelineState::kIdle;
@@ -344,6 +367,7 @@ PipelineOutput CombatPipeline::processFrame(const cv::Mat& frame) {
         ct.id = t.track_id;
         ct.target_class = toCoreTargetClass(t.detection.target_class);
         ct.affiliation = toCoreAffiliation(t.detection.affiliation);
+        ct.is_lost = (t.lost_frames > 0);
         ct.distance_m = t.aim.distance_m;
         ct.confidence = t.detection.confidence;
         sm_targets.push_back(ct);

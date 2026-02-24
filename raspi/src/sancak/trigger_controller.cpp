@@ -12,11 +12,11 @@ float TriggerController::distancePx(const cv::Point2f& a, const cv::Point2f& b) 
 }
 
 void TriggerController::initialize(float aim_tolerance_px,
-                                  int lock_frames_required,
+                                  int lock_duration_ms,
                                   int burst_duration_ms,
                                   int cooldown_ms) {
     aim_tolerance_px_ = std::max(0.0f, aim_tolerance_px);
-    lock_frames_required_ = std::max(0, lock_frames_required);
+    lock_duration_ = std::chrono::milliseconds(std::max(0, lock_duration_ms));
     burst_duration_ = std::chrono::milliseconds(std::max(0, burst_duration_ms));
     cooldown_ = std::chrono::milliseconds(std::max(0, cooldown_ms));
     reset();
@@ -24,7 +24,7 @@ void TriggerController::initialize(float aim_tolerance_px,
 
 void TriggerController::reset() {
     state_ = State::SEARCHING;
-    locked_frames_ = 0;
+    lock_start_time_ = std::chrono::steady_clock::time_point{};
     state_start_ = std::chrono::steady_clock::time_point{};
 }
 
@@ -32,10 +32,10 @@ bool TriggerController::update(const cv::Point2f& target_center, const cv::Point
     const auto now = std::chrono::steady_clock::now();
 
     const bool within = (distancePx(target_center, crosshair_center) <= aim_tolerance_px_);
-    if (within) {
-        ++locked_frames_;
-    } else {
-        locked_frames_ = 0;
+    if (!within) {
+        lock_start_time_ = std::chrono::steady_clock::time_point{};
+    } else if (lock_start_time_ == std::chrono::steady_clock::time_point{}) {
+        lock_start_time_ = now;
     }
 
     // Zaman bazlı state'ler
@@ -43,7 +43,7 @@ bool TriggerController::update(const cv::Point2f& target_center, const cv::Point
         if (now - state_start_ >= burst_duration_) {
             state_ = State::COOLDOWN;
             state_start_ = now;
-            locked_frames_ = 0; // cooldown sonrası yeniden kilitlenme gereksinimi
+            lock_start_time_ = std::chrono::steady_clock::time_point{};
             return false;
         }
         return true;
@@ -52,6 +52,9 @@ bool TriggerController::update(const cv::Point2f& target_center, const cv::Point
     if (state_ == State::COOLDOWN) {
         if (now - state_start_ >= cooldown_) {
             state_ = within ? State::LOCKING : State::SEARCHING;
+            if (within) {
+                lock_start_time_ = now;
+            }
         }
         return false;
     }
@@ -59,10 +62,11 @@ bool TriggerController::update(const cv::Point2f& target_center, const cv::Point
     // SEARCHING / LOCKING
     state_ = within ? State::LOCKING : State::SEARCHING;
 
-    if (within && locked_frames_ >= lock_frames_required_) {
+    if (within && lock_start_time_ != std::chrono::steady_clock::time_point{} &&
+        (now - lock_start_time_) >= lock_duration_) {
         state_ = State::FIRING;
         state_start_ = now;
-        locked_frames_ = 0;
+        lock_start_time_ = std::chrono::steady_clock::time_point{};
         return true;
     }
 
