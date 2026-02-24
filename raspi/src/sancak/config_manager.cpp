@@ -29,6 +29,32 @@ bool ConfigManager::loadFromFile(const std::string& path) {
             return false;
         }
 
+        // --- Target Rules ---
+        target_rules_.clear();
+        if (!fs["targets"].empty()) {
+            auto node = fs["targets"];
+            struct TargetYaml {
+                const char* yaml_name;
+                core::TargetClass class_enum;
+            } map[] = {
+                {"iha", core::TargetClass::Drone},
+                {"f16", core::TargetClass::F16},
+                {"helikopter", core::TargetClass::Helicopter},
+                {"balistik_fuze", core::TargetClass::Missile},
+            };
+            for (const auto& entry : map) {
+                if (!node[entry.yaml_name].empty()) {
+                    auto tnode = node[entry.yaml_name];
+                    core::TargetRule rule;
+                    rule.target = entry.class_enum;
+                    tnode["min_range_m"] >> rule.min_range_m;
+                    tnode["max_range_m"] >> rule.max_range_m;
+                    tnode["priority"] >> rule.priority;
+                    target_rules_[entry.class_enum] = rule;
+                }
+            }
+        }
+
         // --- Kamera ---
         if (!fs["camera"].empty()) {
             auto node = fs["camera"];
@@ -36,6 +62,56 @@ bool ConfigManager::loadFromFile(const std::string& path) {
             node["frame_width"]     >> config_.camera.frame_width;
             node["frame_height"]    >> config_.camera.frame_height;
             node["fps_target"]      >> config_.camera.fps_target;
+
+            if (!node["h_fov_deg"].empty()) node["h_fov_deg"] >> config_.camera.h_fov_deg;
+            if (!node["v_fov_deg"].empty()) node["v_fov_deg"] >> config_.camera.v_fov_deg;
+        }
+
+        // --- Geofence ---
+        if (!fs["geofence"].empty()) {
+            auto node = fs["geofence"];
+            if (!node["pan_deg"].empty()) {
+                auto pn = node["pan_deg"];
+                if (!pn["min"].empty()) pn["min"] >> config_.geofence.pan_min_deg;
+                if (!pn["max"].empty()) pn["max"] >> config_.geofence.pan_max_deg;
+            }
+            if (!node["tilt_deg"].empty()) {
+                auto tn = node["tilt_deg"];
+                if (!tn["min"].empty()) tn["min"] >> config_.geofence.tilt_min_deg;
+                if (!tn["max"].empty()) tn["max"] >> config_.geofence.tilt_max_deg;
+            }
+        }
+
+        // --- Trigger Controller ---
+        if (!fs["trigger"].empty()) {
+            auto node = fs["trigger"];
+            if (!node["aim_tolerance_px"].empty()) node["aim_tolerance_px"] >> config_.trigger.aim_tolerance_px;
+            if (!node["lock_frames_required"].empty()) node["lock_frames_required"] >> config_.trigger.lock_frames_required;
+            if (!node["burst_duration_ms"].empty()) node["burst_duration_ms"] >> config_.trigger.burst_duration_ms;
+            if (!node["cooldown_ms"].empty()) node["cooldown_ms"] >> config_.trigger.cooldown_ms;
+        }
+
+        // --- IFF (Dost-Düşman renk eşikleri) ---
+        if (!fs["iff"].empty()) {
+            auto node = fs["iff"];
+            if (!node["foe_red"].empty()) {
+                auto red = node["foe_red"];
+                if (!red["h_min"].empty()) red["h_min"] >> config_.iff.foe_red.h_min;
+                if (!red["h_max"].empty()) red["h_max"] >> config_.iff.foe_red.h_max;
+                if (!red["s_min"].empty()) red["s_min"] >> config_.iff.foe_red.s_min;
+                if (!red["s_max"].empty()) red["s_max"] >> config_.iff.foe_red.s_max;
+                if (!red["v_min"].empty()) red["v_min"] >> config_.iff.foe_red.v_min;
+                if (!red["v_max"].empty()) red["v_max"] >> config_.iff.foe_red.v_max;
+            }
+            if (!node["friend_blue"].empty()) {
+                auto blue = node["friend_blue"];
+                if (!blue["h_min"].empty()) blue["h_min"] >> config_.iff.friend_blue.h_min;
+                if (!blue["h_max"].empty()) blue["h_max"] >> config_.iff.friend_blue.h_max;
+                if (!blue["s_min"].empty()) blue["s_min"] >> config_.iff.friend_blue.s_min;
+                if (!blue["s_max"].empty()) blue["s_max"] >> config_.iff.friend_blue.s_max;
+                if (!blue["v_min"].empty()) blue["v_min"] >> config_.iff.friend_blue.v_min;
+                if (!blue["v_max"].empty()) blue["v_max"] >> config_.iff.friend_blue.v_max;
+            }
         }
 
         // --- YOLO ---
@@ -53,9 +129,9 @@ bool ConfigManager::loadFromFile(const std::string& path) {
             if (!node["class_names"].empty()) {
                 config_.yolo.class_names.clear();
                 auto cn = node["class_names"];
-                for (auto it = cn.begin(); it != cn.end(); ++it) {
+                for (auto&& it : cn) {
                     std::string name;
-                    (*it) >> name;
+                    it >> name;
                     config_.yolo.class_names.push_back(name);
                 }
             }
@@ -98,11 +174,11 @@ bool ConfigManager::loadFromFile(const std::string& path) {
             if (!node["lookup_table"].empty()) {
                 config_.ballistics.lookup_table.clear();
                 auto lt = node["lookup_table"];
-                for (auto it = lt.begin(); it != lt.end(); ++it) {
+                for (auto&& it : lt) {
                     BallisticsConfig::CorrectionEntry entry;
-                    (*it)["distance_m"]  >> entry.distance_m;
-                    (*it)["y_offset_px"] >> entry.y_offset_px;
-                    (*it)["x_offset_px"] >> entry.x_offset_px;
+                    it["distance_m"]  >> entry.distance_m;
+                    it["y_offset_px"] >> entry.y_offset_px;
+                    it["x_offset_px"] >> entry.x_offset_px;
                     config_.ballistics.lookup_table.push_back(entry);
                 }
             }
@@ -112,6 +188,9 @@ bool ConfigManager::loadFromFile(const std::string& path) {
         if (!fs["tracking"].empty()) {
             auto node = fs["tracking"];
             node["iou_threshold"]      >> config_.tracking.iou_threshold;
+            if (!node["max_center_distance_px"].empty()) {
+                node["max_center_distance_px"] >> config_.tracking.max_center_distance_px;
+            }
             node["max_lost_frames"]    >> config_.tracking.max_lost_frames;
             node["min_confirm_frames"] >> config_.tracking.min_confirm_frames;
             node["velocity_smoothing"] >> config_.tracking.velocity_smoothing;
@@ -126,6 +205,44 @@ bool ConfigManager::loadFromFile(const std::string& path) {
             int en = 1;
             node["enabled"] >> en;
             config_.serial.enabled = (en != 0);
+        }
+
+        // --- Network (opsiyonel) ---
+        // Future-proof: hem eski (network) hem yeni (networking) şemasını destekle.
+        cv::FileNode netNode;
+        if (!fs["networking"].empty()) {
+            netNode = fs["networking"];
+        } else if (!fs["network"].empty()) {
+            netNode = fs["network"];
+        }
+
+        if (!netNode.empty()) {
+            auto node = netNode;
+            int ve = config_.network.video_enabled ? 1 : 0;
+            if (!node["video_enabled"].empty()) node["video_enabled"] >> ve;
+            config_.network.video_enabled = (ve != 0);
+
+            int te = config_.network.telemetry_enabled ? 1 : 0;
+            if (!node["telemetry_enabled"].empty()) node["telemetry_enabled"] >> te;
+            config_.network.telemetry_enabled = (te != 0);
+
+            // Alan adları alias'ları:
+            // - target_pc_ip  -> gcs_host
+            // - video_port    -> video_udp_port
+            // - telemetry_port-> telemetry_tcp_port
+            // - telemetry_push_port -> telemetry_push_port
+            if (!node["gcs_host"].empty()) node["gcs_host"] >> config_.network.gcs_host;
+            if (!node["target_pc_ip"].empty()) node["target_pc_ip"] >> config_.network.gcs_host;
+
+            if (!node["video_udp_port"].empty()) node["video_udp_port"] >> config_.network.video_udp_port;
+            if (!node["video_port"].empty()) node["video_port"] >> config_.network.video_udp_port;
+
+            if (!node["telemetry_tcp_port"].empty()) node["telemetry_tcp_port"] >> config_.network.telemetry_tcp_port;
+            if (!node["telemetry_port"].empty()) node["telemetry_port"] >> config_.network.telemetry_tcp_port;
+            if (!node["telemetry_push_port"].empty()) node["telemetry_push_port"] >> config_.network.telemetry_push_port;
+
+            if (!node["jpeg_quality"].empty()) node["jpeg_quality"] >> config_.network.jpeg_quality;
+            if (!node["udp_mtu_bytes"].empty()) node["udp_mtu_bytes"] >> config_.network.udp_mtu_bytes;
         }
 
         // --- Genel ---
@@ -169,6 +286,48 @@ bool ConfigManager::saveToFile(const std::string& path) const {
         fs << "frame_width"     << config_.camera.frame_width;
         fs << "frame_height"    << config_.camera.frame_height;
         fs << "fps_target"      << config_.camera.fps_target;
+        fs << "h_fov_deg"       << config_.camera.h_fov_deg;
+        fs << "v_fov_deg"       << config_.camera.v_fov_deg;
+        fs << "}";
+
+        // --- Geofence ---
+        fs << "geofence" << "{";
+        fs << "pan_deg" << "{";
+        fs << "min" << config_.geofence.pan_min_deg;
+        fs << "max" << config_.geofence.pan_max_deg;
+        fs << "}";
+        fs << "tilt_deg" << "{";
+        fs << "min" << config_.geofence.tilt_min_deg;
+        fs << "max" << config_.geofence.tilt_max_deg;
+        fs << "}";
+        fs << "}";
+
+        // --- Trigger Controller ---
+        fs << "trigger" << "{";
+        fs << "aim_tolerance_px" << config_.trigger.aim_tolerance_px;
+        fs << "lock_frames_required" << config_.trigger.lock_frames_required;
+        fs << "burst_duration_ms" << config_.trigger.burst_duration_ms;
+        fs << "cooldown_ms" << config_.trigger.cooldown_ms;
+        fs << "}";
+
+        // --- IFF (Dost-Düşman renk eşikleri) ---
+        fs << "iff" << "{";
+        fs << "foe_red" << "{";
+        fs << "h_min" << config_.iff.foe_red.h_min;
+        fs << "h_max" << config_.iff.foe_red.h_max;
+        fs << "s_min" << config_.iff.foe_red.s_min;
+        fs << "s_max" << config_.iff.foe_red.s_max;
+        fs << "v_min" << config_.iff.foe_red.v_min;
+        fs << "v_max" << config_.iff.foe_red.v_max;
+        fs << "}";
+        fs << "friend_blue" << "{";
+        fs << "h_min" << config_.iff.friend_blue.h_min;
+        fs << "h_max" << config_.iff.friend_blue.h_max;
+        fs << "s_min" << config_.iff.friend_blue.s_min;
+        fs << "s_max" << config_.iff.friend_blue.s_max;
+        fs << "v_min" << config_.iff.friend_blue.v_min;
+        fs << "v_max" << config_.iff.friend_blue.v_max;
+        fs << "}";
         fs << "}";
 
         // --- YOLO ---
@@ -226,6 +385,7 @@ bool ConfigManager::saveToFile(const std::string& path) const {
         // --- Takip ---
         fs << "tracking" << "{";
         fs << "iou_threshold"      << config_.tracking.iou_threshold;
+        fs << "max_center_distance_px" << config_.tracking.max_center_distance_px;
         fs << "max_lost_frames"    << config_.tracking.max_lost_frames;
         fs << "min_confirm_frames" << config_.tracking.min_confirm_frames;
         fs << "velocity_smoothing" << config_.tracking.velocity_smoothing;
@@ -237,6 +397,19 @@ bool ConfigManager::saveToFile(const std::string& path) const {
         fs << "baud_rate"  << config_.serial.baud_rate;
         fs << "timeout_ms" << config_.serial.timeout_ms;
         fs << "enabled"    << (config_.serial.enabled ? 1 : 0);
+        fs << "}";
+
+        // --- Network (opsiyonel) ---
+        // Yeni şema adı ve anahtarlar: networking / target_pc_ip / video_port / telemetry_port
+        fs << "networking" << "{";
+        fs << "video_enabled"     << (config_.network.video_enabled ? 1 : 0);
+        fs << "telemetry_enabled" << (config_.network.telemetry_enabled ? 1 : 0);
+        fs << "target_pc_ip"      << config_.network.gcs_host;
+        fs << "video_port"        << config_.network.video_udp_port;
+        fs << "telemetry_port"    << config_.network.telemetry_tcp_port;
+        fs << "telemetry_push_port" << config_.network.telemetry_push_port;
+        fs << "jpeg_quality"      << config_.network.jpeg_quality;
+        fs << "udp_mtu_bytes"     << config_.network.udp_mtu_bytes;
         fs << "}";
 
         // --- Genel ---
@@ -257,6 +430,12 @@ bool ConfigManager::saveToFile(const std::string& path) const {
 SystemConfig ConfigManager::get() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return config_;
+}
+
+std::optional<core::TargetRule> ConfigManager::getRule(core::TargetClass type) const {
+    auto it = target_rules_.find(type);
+    if (it != target_rules_.end()) return it->second;
+    return std::nullopt;
 }
 
 void ConfigManager::set(const SystemConfig& cfg) {

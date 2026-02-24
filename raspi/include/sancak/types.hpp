@@ -17,6 +17,12 @@
 #include <cstdint>
 
 namespace sancak {
+/// IFF (Dost-Düşman) durumu
+enum class Affiliation : uint8_t {
+    Friend = 0,
+    Foe = 1,
+    Unknown = 2
+};
 
 // ============================================================================
 // SABITLER
@@ -95,6 +101,7 @@ struct Detection {
     float       confidence;      ///< Güven skoru [0, 1]
     TargetClass target_class;    ///< Hedef sınıfı
     int         class_id;        ///< Ham sınıf ID (model çıkışı)
+    Affiliation affiliation = Affiliation::Unknown; ///< IFF sonucu
 };
 
 /// Balon segmentasyon sonucu
@@ -113,11 +120,11 @@ struct DistanceEstimate {
 
 /// Balistik düzeltme vektörü
 struct BallisticCorrection {
-    float dx_px = 0.0f;   ///< Yatay düzeltme (piksel)
-    float dy_px = 0.0f;   ///< Dikey düzeltme (piksel)
-    float parallax_deg = 0.0f;   ///< Paralaks açısı (derece)
-    float drop_m       = 0.0f;   ///< Balistik düşüş (metre)
-    float lead_m       = 0.0f;   ///< Önleme mesafesi (metre)
+    float dx_px = 0.0F;   ///< Yatay düzeltme (piksel)
+    float dy_px = 0.0F;   ///< Dikey düzeltme (piksel)
+    float parallax_deg = 0.0F;   ///< Paralaks açısı (derece)
+    float drop_m       = 0.0F;   ///< Balistik düşüş (metre)
+    float lead_m       = 0.0F;   ///< Önleme mesafesi (metre)
 };
 
 /// Nişan noktası (tüm düzeltmeler uygulanmış)
@@ -127,6 +134,31 @@ struct AimPoint {
     BallisticCorrection correction;  ///< Uygulanan düzeltmeler
     float distance_m = 0.0f;    ///< Tahmini mesafe
     bool  valid = false;         ///< Geçerli nişan mı?
+};
+
+/// Ağ/telemetri için sadeleştirilmiş nişan sonucu
+///
+/// Not: CombatPipeline içindeki detaylı AimPoint yapısından türetilir.
+struct AimResult {
+    cv::Point2f raw_xy;       ///< Ham (x,y)
+    cv::Point2f corrected_xy; ///< Düzeltilmiş (x,y)
+    int32_t     class_id = -1;///< Modelin ham class ID'si
+    bool        valid = false;
+};
+
+/// Gelişmiş telemetri (PC'ye gönderilecek)
+struct AimTelemetry {
+    AimResult aim;
+    double inference_ms = 0.0;   ///< YOLO çıkarım süresi (ms)
+    double aim_solve_ms = 0.0;   ///< AimSolver hesap süresi (ms)
+    uint32_t frame_id = 0;
+    uint64_t monotonic_us = 0;   ///< (isteğe bağlı) pipeline timestamp (us)
+};
+
+/// PC'ye telemetri göndermek için arayüz
+struct INetworkSender {
+    virtual ~INetworkSender() = default;
+    virtual void publishAimTelemetry(const AimTelemetry& telem) = 0;
 };
 
 /// Takip edilen tek hedef
