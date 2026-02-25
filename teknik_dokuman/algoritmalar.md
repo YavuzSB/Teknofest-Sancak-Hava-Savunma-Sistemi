@@ -1,0 +1,36 @@
+## 7) Algoritmalar (Detaylı)
+
+### 7.1 YOLO26-Nano (OpenCV DNN + ONNX)
+...existing code...
+
+### 7.2 IFF (Dost/Düşman) — HSV ile renk sayımı
+...existing code...
+
+### 7.3 IFF Stabilizasyonu — Majority voting + hysteresis
+...existing code...
+
+### 7.4 Multi-target Tracking — IoU + merkez mesafesi fallback
+...existing code...
+
+### 7.5 Balon segmentasyonu (bbox içinde)
+...existing code...
+
+### 7.6 Mesafe tahmini (pinhole)
+...existing code...
+
+### 7.7 Balistik düzeltme (lookup table ağırlıklı)
+...existing code...
+
+### 7.8 AimSolver (tüm düzeltmelerin birleşimi)
+...existing code...
+
+### 7.9 Geofence
+...existing code...
+
+### 7.10 TriggerController (FPS bağımsız tetik disiplini)
+...existing code...
+
+---
+
+## 8) Kural Motoru (CombatStateMachine)
+...existing code...

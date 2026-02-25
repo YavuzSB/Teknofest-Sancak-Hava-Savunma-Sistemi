@@ -1,6 +1,6 @@
 /**
  * @file color_filter.cpp
- * @brief Renk Filtreleme Modfclfc - Implementasyon
+ * @brief Renk Filtreleme Modulu - Implementasyon
  */
 #include "color_filter.hpp"
 
@@ -8,14 +8,14 @@ namespace sancak {
 
 ColorFilter::ColorFilter()
 {
-    // K31rm31z31 (HSV'de k31rm31z31 0 ve 180 civar31ndad31r)
+    // Kirmizi (HSV'de kirmizi 0 ve 180 civarindadir)
     redLowRange_  = { cv::Scalar(0,   100, 80), cv::Scalar(10,  255, 255) };
     redHighRange_ = { cv::Scalar(170, 100, 80), cv::Scalar(180, 255, 255) };
 
     // Mavi
     blueRange_   = { cv::Scalar(100, 100, 70), cv::Scalar(130, 255, 255) };
 
-    // Sar31
+    // Sari
     yellowRange_ = { cv::Scalar(20,  100, 70), cv::Scalar(35,  255, 255) };
 }
 
@@ -86,9 +86,9 @@ cv::Mat ColorFilter::applyMorphology(const cv::Mat& mask,
     );
 
     cv::Mat result;
-    // Opening: kfce7fck gfcrfcltfcleri temizler
+    // Opening: kue7uk gurultuleri temizler
     cv::morphologyEx(mask, result, cv::MORPH_OPEN, kernel, cv::Point(-1, -1), 1);
-    // Closing: delikleri kapat31r
+    // Closing: delikleri kapatir
     cv::morphologyEx(result, result, cv::MORPH_CLOSE, kernel, cv::Point(-1, -1), iterations);
 
     return result;
@@ -99,7 +99,7 @@ BalloonColor ColorFilter::identifyColor(const cv::Mat& redMask,
                                        const cv::Mat& yellowMask,
                                        const cv::Rect& roi) const
 {
-    // ROI s31n31rlar31n31 kontrol et
+    // ROI sinirlarini kontrol et
     if (roi.x < 0 || roi.y < 0 ||
         roi.x + roi.width > redMask.cols ||
         roi.y + roi.height > redMask.rows) {
@@ -115,7 +115,7 @@ BalloonColor ColorFilter::identifyColor(const cv::Mat& redMask,
     int bluePixels   = cv::countNonZero(roiBlue);
     int yellowPixels = cv::countNonZero(roiYellow);
 
-    // En fazla piksele sahip renk kazan31r
+    // En fazla piksele sahip renk kazanir
     if (redPixels > bluePixels && redPixels > yellowPixels) {
         return BalloonColor::RED;
     } else if (bluePixels > yellowPixels) {

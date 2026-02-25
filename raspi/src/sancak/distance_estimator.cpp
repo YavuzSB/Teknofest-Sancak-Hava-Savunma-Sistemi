@@ -69,7 +69,6 @@ DistanceEstimate DistanceEstimator::combined(float balloon_radius_px,
     } else {
         combined = e2;
     }
-    }
 
     return combined;
 }
