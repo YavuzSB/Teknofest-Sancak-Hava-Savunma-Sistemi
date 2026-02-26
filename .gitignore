@@ -33,5 +33,10 @@ Thumbs.db
 # Python
 .env
 venv/
+
+# AI export çıktıları (NotebookLM vb. için üretilen parçalar)
+ai_share/
+ai_share_*/
+ai_share_plain*/
 # Sürüm dosyası hariç
 !VERSION

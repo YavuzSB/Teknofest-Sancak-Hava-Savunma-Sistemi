@@ -1,15 +1,14 @@
-# Teknofest GCS - C++ Qt6 Implementation
+# Teknofest GCS (PC) — C++17 ImGui/GLFW/OpenGL Uygulaması
 
-Modern C++17 ile yazılmış profesyonel Teknofest Ground Control Station uygulaması.
+Modern C++17 ile yazılmış Teknofest Ground Control Station (GCS) uygulaması.
 
 ## Özellikler
 
 - ✅ Modern C++17 standartları
 - ✅ Smart pointer kullanımı (unique_ptr, shared_ptr)
 - ✅ RAII prensipleri
-- ✅ Qt6 ile GUI
+- ✅ Dear ImGui ile GUI (immediate-mode)
 - ✅ Thread-safe UDP/TCP iletişimi
-- ✅ PIMPL idiom (ArduinoController)
 - ✅ Const correctness
 - ✅ Copy/Move semantics kontrolü
 - ✅ Profesyonel dosya yapısı
@@ -17,8 +16,9 @@ Modern C++17 ile yazılmış profesyonel Teknofest Ground Control Station uygula
 ## Gereksinimler
 
 - CMake 3.21+
-- Qt6 (Core, Widgets, Network, Gui)
 - C++17 uyumlu derleyici (MSVC 2019+, GCC 9+, Clang 10+)
+
+> Not: Detaylı derleme/dağıtım adımları için [BUILD.md](BUILD.md) dosyasına bak.
 
 ## Derleme
 
@@ -61,16 +61,13 @@ $env:ARDUINO_PORT = "COM3"
 
 ## Mimari
 
-### Sınıf Yapısı
+### Bileşenler
 
-```
-teknofest::
-  ├── MainWindow          - Ana pencere (QMainWindow)
-  ├── VideoThread         - UDP video alıcı thread
-  ├── TelemetryThread     - TCP telemetri/komut thread
-  ├── CameraWidget        - Kamera görüntü widget
-  └── ArduinoController   - Arduino seri port kontrolcüsü (PIMPL)
-```
+- `App`: ImGui panel çizimi + UI iş akışı
+- `VideoReceiver`: UDP video alıcı + (varsa) fragment reassembly + JPEG decode
+- `TelemetryClient`: TCP telemetri istemcisi + parse + yeniden bağlanma
+- `ArduinoController`: (PC tarafı) seri port/komut iletimi için kontrol katmanı
+- `TextureHelper`: OpenGL texture yardımcıları
 
 ### Dosya Yapısı
 
@@ -81,20 +78,21 @@ PC/
 ├── BUILD.md             - Detaylı derleme talimatları
 ├── .clang-format        - Kod stil ayarları
 ├── include/             - Header dosyaları (.hpp)
-│   ├── MainWindow.hpp
-│   ├── VideoThread.hpp
-│   ├── TelemetryThread.hpp
-│   ├── CameraWidget.hpp
-│   └── ArduinoController.hpp
+│   ├── App.hpp
+│   ├── ArduinoController.hpp
+│   ├── CsvLogger.hpp
+│   ├── NetworkProtocol.hpp
+│   ├── TelemetryClient.hpp
+│   ├── TextureHelper.hpp
+│   └── VideoReceiver.hpp
 ├── src/                 - Kaynak dosyaları (.cpp)
 │   ├── main.cpp
-│   ├── MainWindow.cpp
-│   ├── VideoThread.cpp
-│   ├── TelemetryThread.cpp
-│   ├── CameraWidget.cpp
-│   └── ArduinoController.cpp
-└── resources/           - Qt kaynakları
-    └── resources.qrc
+│   ├── App.cpp
+│   ├── ArduinoController.cpp
+│   ├── CsvLogger.cpp
+│   ├── TelemetryClient.cpp
+│   ├── TextureHelper.cpp
+│   └── VideoReceiver.cpp
 ```
 
 ## Özellikler
@@ -110,15 +108,7 @@ PC/
 ### Thread Safety
 
 - `std::atomic` ile flag yönetimi
-- `QMutex` ile veri paylaşımı koruması
-- Signal/Slot ile thread-safe iletişim
-
-### Qt Best Practices
-
-- Signals/Slots ile loose coupling
-- Parent-child widget yönetimi ile otomatik bellek temizliği
-- QThread ile uygun thread kullanımı
-- Qt naming conventions
+- `std::mutex` ile paylaşılan veri koruması (UI thread ↔ ağ thread’leri)
 
 ## Geliştirme
 
@@ -132,7 +122,7 @@ PC/
 
 ### Test
 
-TODO: Unit testler eklenecek (Google Test veya Qt Test)
+TODO: Unit testler eklenecek.
 
 ## Lisans
 
