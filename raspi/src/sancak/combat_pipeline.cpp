@@ -274,6 +274,12 @@ PipelineOutput CombatPipeline::processFrame(const cv::Mat& frame) {
     inference_ms = yolo_.lastInferenceMs();
     output.inference_ms = inference_ms;
 
+    // Optimizasyon: Frame başına tek BGR->HSV dönüşümü (IFF + segmentasyon aynı HSV'i paylaşır)
+    cv::Mat hsv_frame;
+    if (!detections.empty()) {
+        cv::cvtColor(frame, hsv_frame, cv::COLOR_BGR2HSV);
+    }
+
     // IFF (Dost-Düşman) renk analizi
     const cv::Scalar red_lower(config_.iff.foe_red.h_min,
                                config_.iff.foe_red.s_min,
@@ -296,9 +302,8 @@ PipelineOutput CombatPipeline::processFrame(const cv::Mat& frame) {
             det.affiliation = Affiliation::Unknown;
             continue;
         }
-        cv::Mat roi_mat = frame(roi);
-        cv::Mat hsv_roi;
-        cv::cvtColor(roi_mat, hsv_roi, cv::COLOR_BGR2HSV);
+        // HSV ROI: precomputed frame üzerinden views (ek cvtColor yok)
+        const cv::Mat hsv_roi = hsv_frame(roi);
 
         cv::Mat mask_red, mask_blue;
         cv::inRange(hsv_roi, red_lower, red_upper, mask_red);
@@ -334,7 +339,7 @@ PipelineOutput CombatPipeline::processFrame(const cv::Mat& frame) {
     for (auto& target : tracked) {
         if (!shouldTreatAsEnemy(target.detection)) continue;
 
-        target.balloon = segmentor_.segment(frame, target.detection.bbox);
+        target.balloon = segmentor_.segmentHsv(hsv_frame, target.detection.bbox);
         if (!target.balloon.found) continue;
 
         state_ = PipelineState::kTracking;

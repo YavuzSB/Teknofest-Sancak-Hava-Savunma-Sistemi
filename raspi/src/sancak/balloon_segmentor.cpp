@@ -51,12 +51,12 @@ BalloonResult BalloonSegmentor::segment(const cv::Mat& frame, const cv::Rect2f& 
 
     if (crop.empty()) { return result; }
 
-    // HSV'ye dönüştür
-    cv::Mat hsv;
-    cv::cvtColor(crop, hsv, cv::COLOR_BGR2HSV);
+    // HSV'ye dönüştür (ROI bazlı - uyumluluk yolu)
+    cv::Mat hsvCrop;
+    cv::cvtColor(crop, hsvCrop, cv::COLOR_BGR2HSV);
 
     // Turuncu maske oluştur
-    cv::Mat mask = createOrangeMask(hsv);
+    cv::Mat mask = createOrangeMask(hsvCrop);
 
     // Morfoloji uygula
     mask = applyMorphology(mask);
@@ -92,6 +92,88 @@ BalloonResult BalloonSegmentor::segment(const cv::Mat& frame, const cv::Rect2f& 
         : 0.0;
 
     if (circularity < config_.min_circularity) { return result; }
+
+    // Global koordinatlara dönüştür
+    result.found  = true;
+    result.center = cv::Point2f(static_cast<float>(x1) + center.x, static_cast<float>(y1) + center.y);
+    result.radius = radius;
+
+    // Güven skoru: dairesellik + alan oranı
+    double area_ratio = area / (CV_PI * radius * radius);
+    result.confidence = static_cast<float>(
+        circularity * 0.5 + std::min(area_ratio, 1.0) * 0.5
+    );
+
+    return result;
+}
+
+BalloonResult BalloonSegmentor::segmentHsv(const cv::Mat& hsvFrame, const cv::Rect2f& bbox)
+{
+    BalloonResult result;
+    // Savunmacı programlama: boş HSV frame gelirse direkt başarısız dön
+    if (hsvFrame.empty()) {
+        return result;
+    }
+
+    // Bbox'ı integer'a çevir ve frame sınırlarına kırp
+    int x1 = std::max(0, static_cast<int>(bbox.x));
+    int y1 = std::max(0, static_cast<int>(bbox.y));
+    int x2 = std::min(hsvFrame.cols, static_cast<int>(bbox.x + bbox.width));
+    int y2 = std::min(hsvFrame.rows, static_cast<int>(bbox.y + bbox.height));
+
+    if (x2 <= x1 || y2 <= y1) {
+        return result;
+    }
+
+    cv::Rect roi(x1, y1, x2 - x1, y2 - y1);
+    cv::Mat hsvCrop = hsvFrame(roi);
+    if (hsvCrop.empty()) {
+        return result;
+    }
+
+    // Turuncu maske oluştur
+    cv::Mat mask = createOrangeMask(hsvCrop);
+    // Morfoloji uygula
+    mask = applyMorphology(mask);
+
+    // Kontur bul
+    std::vector<std::vector<cv::Point>> contours;
+    cv::findContours(mask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+    if (contours.empty()) {
+        return result;
+    }
+
+    // En büyük konturu bul
+    auto best_it = std::max_element(contours.begin(), contours.end(),
+        [](const auto& a, const auto& b) {
+            return cv::contourArea(a) < cv::contourArea(b);
+        }
+    );
+
+    double area = cv::contourArea(*best_it);
+    if (area < 50.0F) {
+        return result;
+    }
+
+    // Minimum çevreleyen daire
+    cv::Point2f center;
+    float radius;
+    cv::minEnclosingCircle(*best_it, center, radius);
+
+    // Yarıçap kontrolü
+    if (radius < config_.min_radius_px || radius > config_.max_radius_px) {
+        return result;
+    }
+
+    // Dairesellik kontrolü
+    double perimeter = cv::arcLength(*best_it, true);
+    double circularity = (perimeter > 0.0)
+        ? (4.0 * CV_PI * area) / (perimeter * perimeter)
+        : 0.0;
+
+    if (circularity < config_.min_circularity) {
+        return result;
+    }
 
     // Global koordinatlara dönüştür
     result.found  = true;

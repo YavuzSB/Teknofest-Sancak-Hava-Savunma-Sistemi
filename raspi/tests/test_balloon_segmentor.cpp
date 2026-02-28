@@ -44,11 +44,20 @@ TEST_CASE("BalloonSegmentor - Sentetik turuncu balon tespiti", "[balloon]") {
 
     auto result = seg.segment(frame, bbox);
 
+    // Optimizasyon yolu: precomputed HSV ile segmentasyon
+    cv::Mat hsv;
+    cv::cvtColor(frame, hsv, cv::COLOR_BGR2HSV);
+    auto resultHsv = seg.segmentHsv(hsv, bbox);
+
     REQUIRE(result.found == true);
     REQUIRE(std::abs(result.center.x - static_cast<float>(balloon_center.x)) < 15.0f);
     REQUIRE(std::abs(result.center.y - static_cast<float>(balloon_center.y)) < 15.0f);
     REQUIRE(result.radius > 0.0f);
     REQUIRE(result.confidence > 0.0f);
+
+    REQUIRE(resultHsv.found == true);
+    REQUIRE(std::abs(resultHsv.center.x - static_cast<float>(balloon_center.x)) < 15.0f);
+    REQUIRE(std::abs(resultHsv.center.y - static_cast<float>(balloon_center.y)) < 15.0f);
 }
 
 TEST_CASE("BalloonSegmentor - Boş bbox", "[balloon]") {

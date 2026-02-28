@@ -50,6 +50,14 @@ public:
     BalloonResult segment(const cv::Mat& frame, const cv::Rect2f& bbox);
 
     /**
+     * @brief Verilen bounding box içinde balonu bul (HSV frame hazırsa)
+     * @param hsvFrame Tam frame (HSV, CV_8UC3)
+     * @param bbox     YOLO tespit bounding box'ı
+     * @return BalloonResult (found, center, radius, confidence)
+     */
+    BalloonResult segmentHsv(const cv::Mat& hsvFrame, const cv::Rect2f& bbox);
+
+    /**
      * @brief HSV aralığını güncelle (çalışma zamanında)
      */
     void updateHsvRange(int h_min, int h_max, int s_min, int s_max,
