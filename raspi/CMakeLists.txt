@@ -147,6 +147,7 @@ add_library(sancak_build_options INTERFACE)
 target_compile_features(sancak_build_options INTERFACE cxx_std_17)
 target_include_directories(sancak_build_options INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../protocol
 )
 
 if(SANCAK_ENABLE_WARNINGS)
@@ -282,11 +283,17 @@ if(SANCAK_BUILD_COMBAT)
     sancak_enable_clang_tidy(sancak_camera)
 
     # --- Serial Communication ---
+    add_library(sancak_uart_protocol STATIC
+        src/protocol/PacketBuilder.cpp
+    )
+    target_link_libraries(sancak_uart_protocol PUBLIC sancak_build_options)
+    sancak_enable_clang_tidy(sancak_uart_protocol)
+
     add_library(sancak_serial STATIC
         src/sancak/serial_comm.cpp
         src/turret_controller.cpp
     )
-    target_link_libraries(sancak_serial PUBLIC sancak_config sancak_build_options)
+    target_link_libraries(sancak_serial PUBLIC sancak_config sancak_uart_protocol sancak_build_options)
     if(UNIX)
         target_link_libraries(sancak_serial PUBLIC Threads::Threads)
     endif()
