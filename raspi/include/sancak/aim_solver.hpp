@@ -14,6 +14,8 @@
 #include "sancak/ballistics_manager.hpp"
 #include "sancak/distance_estimator.hpp"
 
+#include <optional>
+
 namespace sancak {
 
 /**
@@ -51,7 +53,10 @@ public:
                    const Detection& detection,
                    const cv::Point2f& velocity,
                    double fps,
-                   const cv::Size& frame_size) const;
+                   const cv::Size& frame_size,
+                   double inference_delay_ms = 50.0,
+                   std::optional<float> lidar_distance_m = std::nullopt,
+                   const cv::Point3f& lidar_offset_m = cv::Point3f(0.0f, 0.0f, 0.0f)) const;
 
     /// Balistik yönetici erişimi (runtime ayar için)
     BallisticsManager& ballistics() { return ballistics_; }

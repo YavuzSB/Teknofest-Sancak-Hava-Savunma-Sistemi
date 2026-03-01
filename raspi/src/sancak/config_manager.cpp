@@ -253,6 +253,28 @@ bool ConfigManager::loadFromFile(const std::string& path) {
             if (!node["udp_mtu_bytes"].empty()) node["udp_mtu_bytes"] >> config_.network.udp_mtu_bytes;
         }
 
+        // --- Lidar (opsiyonel) ---
+        if (!fs["lidar"].empty()) {
+            auto node = fs["lidar"];
+
+            int en = config_.lidar.enabled ? 1 : 0;
+            if (!node["enabled"].empty()) node["enabled"] >> en;
+            config_.lidar.enabled = (en != 0);
+
+            int um = config_.lidar.use_mock ? 1 : 0;
+            if (!node["use_mock"].empty()) node["use_mock"] >> um;
+            config_.lidar.use_mock = (um != 0);
+
+            if (!node["mock_fixed_distance_m"].empty()) node["mock_fixed_distance_m"] >> config_.lidar.mock_fixed_distance_m;
+            if (!node["mock_min_distance_m"].empty()) node["mock_min_distance_m"] >> config_.lidar.mock_min_distance_m;
+            if (!node["mock_max_distance_m"].empty()) node["mock_max_distance_m"] >> config_.lidar.mock_max_distance_m;
+            if (!node["mock_update_hz"].empty()) node["mock_update_hz"] >> config_.lidar.mock_update_hz;
+
+            if (!node["offset_x_m"].empty()) node["offset_x_m"] >> config_.lidar.offset_x_m;
+            if (!node["offset_y_m"].empty()) node["offset_y_m"] >> config_.lidar.offset_y_m;
+            if (!node["offset_z_m"].empty()) node["offset_z_m"] >> config_.lidar.offset_z_m;
+        }
+
         // --- Genel ---
         if (!fs["headless"].empty()) {
             int hl = 1;
@@ -418,6 +440,19 @@ bool ConfigManager::saveToFile(const std::string& path) const {
         fs << "telemetry_push_port" << config_.network.telemetry_push_port;
         fs << "jpeg_quality"      << config_.network.jpeg_quality;
         fs << "udp_mtu_bytes"     << config_.network.udp_mtu_bytes;
+        fs << "}";
+
+        // --- Lidar ---
+        fs << "lidar" << "{";
+        fs << "enabled" << (config_.lidar.enabled ? 1 : 0);
+        fs << "use_mock" << (config_.lidar.use_mock ? 1 : 0);
+        fs << "mock_fixed_distance_m" << config_.lidar.mock_fixed_distance_m;
+        fs << "mock_min_distance_m" << config_.lidar.mock_min_distance_m;
+        fs << "mock_max_distance_m" << config_.lidar.mock_max_distance_m;
+        fs << "mock_update_hz" << config_.lidar.mock_update_hz;
+        fs << "offset_x_m" << config_.lidar.offset_x_m;
+        fs << "offset_y_m" << config_.lidar.offset_y_m;
+        fs << "offset_z_m" << config_.lidar.offset_z_m;
         fs << "}";
 
         // --- Genel ---

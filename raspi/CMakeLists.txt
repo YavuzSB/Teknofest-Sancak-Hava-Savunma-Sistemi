@@ -32,6 +32,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(SANCAK_BUILD_COMBAT     "Build new combat pipeline (YOLO + Ballistics)" ON)
 option(SANCAK_BUILD_LEGACY     "Build legacy detection modules"               OFF)
 option(SANCAK_ENABLE_TESTS     "Build unit tests"                             ON)
+option(SANCAK_USE_ONNXRUNTIME "Use ONNX Runtime for YOLO inference"          ON)
 option(SANCAK_ENABLE_CLANG_TIDY "Enable clang-tidy"                           OFF)
 option(SANCAK_CLANG_TIDY_WARNINGS_AS_ERRORS "clang-tidy warnings as errors"   OFF)
 option(SANCAK_ENABLE_WARNINGS  "Enable compiler warnings"                     ON)
@@ -104,6 +105,40 @@ endif()
 add_library(sancak_opencv INTERFACE)
 target_include_directories(sancak_opencv INTERFACE ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(sancak_opencv INTERFACE ${OpenCV_LIBS})
+
+# ==========================================================================
+# ONNX Runtime (opsiyonel ama varsayılan ON)
+# ==========================================================================
+if(SANCAK_USE_ONNXRUNTIME)
+    set(ONNXRUNTIME_DIR "" CACHE PATH "Path to ONNX Runtime install root (contains include/ and lib/)")
+
+    # Headers
+    find_path(ONNXRUNTIME_INCLUDE_DIR
+        NAMES onnxruntime_cxx_api.h
+        HINTS ${ONNXRUNTIME_DIR} $ENV{ONNXRUNTIME_DIR}
+        PATH_SUFFIXES include
+    )
+
+    # Library
+    find_library(ONNXRUNTIME_LIBRARY
+        NAMES onnxruntime onnxruntime_static
+        HINTS ${ONNXRUNTIME_DIR} $ENV{ONNXRUNTIME_DIR}
+        PATH_SUFFIXES lib lib64
+    )
+
+    if(NOT ONNXRUNTIME_INCLUDE_DIR OR NOT ONNXRUNTIME_LIBRARY)
+        message(FATAL_ERROR
+            "SANCAK_USE_ONNXRUNTIME=ON ama ONNX Runtime bulunamadı.\n"
+            "- ONNXRUNTIME_DIR (CMake cache) veya ENV{ONNXRUNTIME_DIR} ayarlayın (include/ ve lib/ içermeli).\n"
+            "- Veya SANCAK_USE_ONNXRUNTIME=OFF yapın (OpenCV DNN fallback).\n"
+        )
+    endif()
+
+    add_library(sancak_onnxruntime INTERFACE)
+    target_include_directories(sancak_onnxruntime INTERFACE ${ONNXRUNTIME_INCLUDE_DIR})
+    target_link_libraries(sancak_onnxruntime INTERFACE ${ONNXRUNTIME_LIBRARY})
+    target_compile_definitions(sancak_onnxruntime INTERFACE SANCAK_USE_ONNXRUNTIME=1)
+endif()
 
 # ============================================================================
 # ORTAK BUILD AYARLARI
@@ -193,6 +228,9 @@ if(SANCAK_BUILD_COMBAT)
         src/sancak/yolo_detector.cpp
     )
     target_link_libraries(sancak_yolo PUBLIC sancak_opencv sancak_config sancak_build_options)
+    if(SANCAK_USE_ONNXRUNTIME)
+        target_link_libraries(sancak_yolo PUBLIC sancak_onnxruntime)
+    endif()
     sancak_enable_clang_tidy(sancak_yolo)
 
     # --- Balloon Segmentor ---
@@ -257,6 +295,7 @@ if(SANCAK_BUILD_COMBAT)
     # --- Combat Pipeline ---
     add_library(sancak_pipeline STATIC
         src/sancak/combat_pipeline.cpp
+        src/sancak/mock_lidar.cpp
     )
     target_link_libraries(sancak_pipeline PUBLIC
         sancak_yolo
@@ -389,11 +428,14 @@ if(SANCAK_ENABLE_TESTS AND SANCAK_BUILD_COMBAT)
         tests/test_target_tracker.cpp
         tests/test_trigger_controller.cpp
         tests/test_balloon_segmentor.cpp
+        tests/test_network_commands.cpp
     )
     target_link_libraries(sancak_tests PRIVATE
         sancak_combat_core
         Catch2::Catch2WithMain
     )
+
+    target_compile_definitions(sancak_tests PRIVATE SANCAK_ENABLE_TEST_HOOKS=1)
 
     include(Catch)
     catch_discover_tests(sancak_tests)

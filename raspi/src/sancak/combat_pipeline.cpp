@@ -9,6 +9,7 @@
  */
 #include "sancak/combat_pipeline.hpp"
 #include "sancak/logger.hpp"
+#include "sancak/mock_lidar.hpp"
 
 #include <opencv2/imgproc.hpp>
 #include <opencv2/highgui.hpp>
@@ -16,6 +17,12 @@
 #include <atomic>
 #include <algorithm>
 #include <cmath>
+#include <cctype>
+#include <filesystem>
+#include <string_view>
+#include <sstream>
+#include <optional>
+#include <thread>
 
 namespace {
     static sancak::core::TargetClass toCoreTargetClass(sancak::TargetClass cls) {
@@ -69,6 +76,67 @@ namespace {
     void signalHandler(int) { g_signal_stop.store(true); }
 }
 
+namespace {
+
+std::string_view trimView(std::string_view s) {
+    while (!s.empty() && (s.front() == ' ' || s.front() == '\t' || s.front() == '\r' || s.front() == '\n')) {
+        s.remove_prefix(1);
+    }
+    while (!s.empty() && (s.back() == ' ' || s.back() == '\t' || s.back() == '\r' || s.back() == '\n')) {
+        s.remove_suffix(1);
+    }
+    return s;
+}
+
+std::string toUpperCopy(std::string_view s) {
+    std::string out;
+    out.reserve(s.size());
+    for (unsigned char c : s) {
+        out.push_back(static_cast<char>(std::toupper(c)));
+    }
+    return out;
+}
+
+bool parseFourFloats(std::string_view s, float& a, float& b, float& c, float& d) {
+    // Format: a,b,c,d (spaces allowed)
+    std::stringstream ss(std::string(trimView(s)));
+    char comma1 = 0, comma2 = 0, comma3 = 0;
+    if (!(ss >> a)) return false;
+    if (!(ss >> comma1) || comma1 != ',') return false;
+    if (!(ss >> b)) return false;
+    if (!(ss >> comma2) || comma2 != ',') return false;
+    if (!(ss >> c)) return false;
+    if (!(ss >> comma3) || comma3 != ',') return false;
+    if (!(ss >> d)) return false;
+    return true;
+}
+
+bool parseInt(std::string_view s, int& out) {
+    try {
+        out = std::stoi(std::string(trimView(s)));
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+std::string deriveFp16ModelPath(const std::string& fp32_path) {
+    // Konvansiyon: foo.onnx -> foo_fp16.onnx
+    // (FP16 modeli yoksa fallback yapılacak.)
+    if (fp32_path.size() >= 5 && fp32_path.rfind(".onnx") == fp32_path.size() - 5) {
+        return fp32_path.substr(0, fp32_path.size() - 5) + "_fp16.onnx";
+    }
+    return fp32_path + "_fp16";
+}
+
+bool fileExists(const std::string& path) {
+    if (path.empty()) return false;
+    std::error_code ec;
+    return std::filesystem::exists(std::filesystem::path(path), ec);
+}
+
+} // namespace
+
 namespace sancak {
 
 bool CombatPipeline::initialize(const SystemConfig& config) {
@@ -90,7 +158,14 @@ bool CombatPipeline::initialize(const SystemConfig& config) {
     }
 
     // 1. YOLO modeli yükle
-    SANCAK_LOG_INFO("YOLO26-Nano modeli yükleniyor...");
+    // FP16 modeli (opsiyonel) path'ini burada hesaplıyoruz.
+    yolo_model_fp32_path_ = config_.yolo.model_path;
+    yolo_model_fp16_path_ = deriveFp16ModelPath(yolo_model_fp32_path_);
+    fp16_enabled_ = false; // default güvenli: FP32
+
+    config_.yolo.model_path = yolo_model_fp32_path_;
+
+    SANCAK_LOG_INFO("YOLO26-Nano modeli yükleniyor... (model='{}')", config_.yolo.model_path);
     if (!yolo_.initialize(config_.yolo)) {
         SANCAK_LOG_FATAL("YOLO modeli yüklenemedi! Çıkılıyor.");
         return false;
@@ -170,6 +245,49 @@ bool CombatPipeline::initialize(const SystemConfig& config) {
         }
     }
 
+    // 8. Lidar (opsiyonel): arka planda ölçüm güncelle + thread-safe cache
+    // Not: Şimdilik sadece MockLidar destekleniyor (use_mock=true).
+    if (lidar_running_.exchange(false)) {
+        if (lidar_thread_.joinable()) lidar_thread_.join();
+    } else {
+        if (lidar_thread_.joinable()) lidar_thread_.join();
+    }
+    lidar_.reset();
+    {
+        std::lock_guard<std::mutex> lock(lidar_mutex_);
+        lidar_distance_m_.reset();
+    }
+
+    if (config_.lidar.enabled) {
+        if (config_.lidar.use_mock) {
+            lidar_ = std::make_unique<MockLidar>(config_.lidar);
+        } else {
+            SANCAK_LOG_WARN("Lidar enabled ama real sensor sürücüsü tanımlı değil (use_mock=false). Lidar devre dışı.");
+        }
+
+        if (lidar_) {
+            const float hz = (config_.lidar.mock_update_hz > 0.0f) ? config_.lidar.mock_update_hz : 20.0f;
+            const auto period = std::chrono::duration<double>(1.0 / static_cast<double>(hz));
+
+            lidar_running_.store(true);
+            lidar_thread_ = std::thread([this, period]() {
+                while (lidar_running_.load()) {
+                    lidar_->update();
+                    auto d = lidar_->getDistanceMeters();
+                    {
+                        std::lock_guard<std::mutex> lock(lidar_mutex_);
+                        lidar_distance_m_ = d;
+                    }
+                    std::this_thread::sleep_for(period);
+                }
+            });
+
+            SANCAK_LOG_INFO("Lidar thread başlatıldı (mock={}, hz={:.1f})",
+                            config_.lidar.use_mock ? "EVET" : "HAYIR",
+                            hz);
+        }
+    }
+
     state_ = PipelineState::kIdle;
     last_frame_time_ = SteadyClock::now();
     last_valid_frame_time_ = SteadyClock::now();
@@ -187,6 +305,9 @@ PipelineOutput CombatPipeline::processFrame(const cv::Mat& frame) {
     output.display_frame = frame.clone();
     output.fps = updateFps();
 
+    // PC -> RasPi komutlarını her frame tüket (komutlar TCP server thread'inde kuyruklanır)
+    consumeNetworkCommands();
+
     // Kamera Watchdog (Fail-Safe)
     const auto now = std::chrono::steady_clock::now();
     const bool frame_ok = !frame.empty();
@@ -197,6 +318,16 @@ PipelineOutput CombatPipeline::processFrame(const cv::Mat& frame) {
     double inference_ms = 0.0;
     double aim_solve_ms = 0.0;
 
+    // Lidar cache snapshot (frame başına bir kez oku)
+    std::optional<float> lidar_distance_m = std::nullopt;
+    if (config_.lidar.enabled) {
+        std::lock_guard<std::mutex> lock(lidar_mutex_);
+        lidar_distance_m = lidar_distance_m_;
+    }
+    const cv::Point3f lidar_offset_m(config_.lidar.offset_x_m,
+                                    config_.lidar.offset_y_m,
+                                    config_.lidar.offset_z_m);
+
     sancak::AimResult aimRes{};
     const TrackedTarget* locked = nullptr;
     std::uint8_t telem_state = static_cast<std::uint8_t>(core::CombatState::Idle);
@@ -205,12 +336,12 @@ PipelineOutput CombatPipeline::processFrame(const cv::Mat& frame) {
 
     auto finalize = [&]() -> PipelineOutput {
         // Görselleştirme
-        if (!config_.headless || config_.network.video_enabled) {
+        if (overlay_enabled_ && (!config_.headless || config_.network.video_enabled) && !output.display_frame.empty()) {
             drawOverlay(output.display_frame, output);
         }
 
         // Network
-        if (config_.network.video_enabled) {
+        if (config_.network.video_enabled && !output.display_frame.empty()) {
             video_streamer_.submit(output.display_frame);
         }
         if (config_.network.telemetry_enabled) {
@@ -264,6 +395,19 @@ PipelineOutput CombatPipeline::processFrame(const cv::Mat& frame) {
         output.state = state_;
         trigger_controller_.reset();
         if (turret_controller_) {
+            turret_controller_->sendCommand(current_pan_deg_, current_tilt_deg_, false);
+        }
+        return finalize();
+    }
+
+    // Uzaktan tespit kapalıysa CPU harcama: YOLO/segmentasyon çalıştırma.
+    if (!detection_enabled_) {
+        state_ = PipelineState::kIdle;
+        output.state = state_;
+        tracker_.reset();
+        trigger_controller_.reset();
+        if (turret_controller_) {
+            turret_controller_->sendSafeLock();
             turret_controller_->sendCommand(current_pan_deg_, current_tilt_deg_, false);
         }
         return finalize();
@@ -350,7 +494,10 @@ PipelineOutput CombatPipeline::processFrame(const cv::Mat& frame) {
             target.detection,
             target.velocity,
             output.fps,
-            frame.size());
+            frame.size(),
+            inference_ms,
+            lidar_distance_m,
+            lidar_offset_m);
         const auto tAim1 = std::chrono::steady_clock::now();
         aim_solve_ms = std::chrono::duration<double, std::milli>(tAim1 - tAim0).count();
 
@@ -496,6 +643,9 @@ void CombatPipeline::run() {
     while (running_ && !g_signal_stop.load()) {
         if (!camera_.read(frame)) {
             SANCAK_LOG_WARN("Frame okunamadı, bekleniyor...");
+            // Kamera okunamazsa da fail-safe'in devreye girebilmesi için boş frame işle.
+            // (Aksi halde processFrame çağrılmaz ve son gönderilen turret komutu “takılı” kalabilir.)
+            (void)processFrame(cv::Mat{});
             cv::waitKey(100);
             continue;
         }
@@ -503,7 +653,7 @@ void CombatPipeline::run() {
         auto output = processFrame(frame);
 
         // Ekran gösterimi (headless değilse)
-        if (!config_.headless) {
+        if (!config_.headless && !output.display_frame.empty()) {
             cv::imshow("SANCAK - Combat View", output.display_frame);
             int key = cv::waitKey(1);
             if (key == 27 || key == 'q') {  // ESC veya Q
@@ -535,6 +685,19 @@ void CombatPipeline::run() {
 
 void CombatPipeline::stop() {
     running_ = false;
+
+    // Lidar thread'i güvenli kapat
+    if (lidar_running_.exchange(false)) {
+        if (lidar_thread_.joinable()) lidar_thread_.join();
+    } else {
+        if (lidar_thread_.joinable()) lidar_thread_.join();
+    }
+    lidar_.reset();
+    {
+        std::lock_guard<std::mutex> lock(lidar_mutex_);
+        lidar_distance_m_.reset();
+    }
+
     camera_.release();
     serial_.close();
     turret_controller_.reset();
@@ -543,6 +706,304 @@ void CombatPipeline::stop() {
     telemetry_sender_.stop();
     if (!config_.headless) cv::destroyAllWindows();
     SANCAK_LOG_INFO("Pipeline durduruldu");
+}
+
+void CombatPipeline::consumeNetworkCommands() {
+    if (!config_.network.telemetry_enabled) return;
+    if (!telemetry_server_.isRunning()) return;
+
+    std::string line;
+    int safety = 0;
+    while (telemetry_server_.tryPopCommand(line)) {
+        handleNetworkCommand(line);
+        if (++safety >= 64) {
+            SANCAK_LOG_WARN("Komut tüketimi safety-cap'e takıldı (64). Kalan komutlar sonraki frame'e kaldı.");
+            break;
+        }
+    }
+}
+
+void CombatPipeline::handleNetworkCommand(const std::string& line) {
+    std::string_view s = trimView(line);
+    if (s.empty()) return;
+
+    // <...> wrapper varsa çıkar
+    if (s.size() >= 2 && s.front() == '<' && s.back() == '>') {
+        s = s.substr(1, s.size() - 2);
+        s = trimView(s);
+    }
+    if (s.empty()) return;
+
+    const auto colon = s.find(':');
+    const std::string cmd = toUpperCopy(colon == std::string_view::npos ? s : s.substr(0, colon));
+    const std::string_view args = (colon == std::string_view::npos) ? std::string_view{} : trimView(s.substr(colon + 1));
+
+    if (cmd == "DETECT") {
+        const std::string a = toUpperCopy(args);
+        if (a == "START") {
+            detection_enabled_ = true;
+            SANCAK_LOG_INFO("Remote DETECT:START");
+        } else if (a == "STOP") {
+            detection_enabled_ = false;
+            tracker_.reset();
+            trigger_controller_.reset();
+            if (turret_controller_) {
+                turret_controller_->sendSafeLock();
+                turret_controller_->sendCommand(current_pan_deg_, current_tilt_deg_, false);
+            }
+            SANCAK_LOG_WARN("Remote DETECT:STOP");
+        } else {
+            SANCAK_LOG_WARN("Bilinmeyen DETECT arg: '{}'", std::string(args));
+        }
+        return;
+    }
+
+    if (cmd == "MODE") {
+        const std::string a = toUpperCopy(args);
+        if (a == "FULL_AUTO") {
+            config_.autonomous = true;
+            ConfigManager::instance().setAutonomous(true);
+            detection_enabled_ = true;
+            SANCAK_LOG_WARN("Remote MODE:FULL_AUTO (autonomous=true)");
+        } else if (a == "MANUAL") {
+            config_.autonomous = false;
+            ConfigManager::instance().setAutonomous(false);
+            SANCAK_LOG_INFO("Remote MODE:MANUAL (autonomous=false)");
+        } else {
+            SANCAK_LOG_WARN("Bilinmeyen MODE arg: '{}'", std::string(args));
+        }
+        return;
+    }
+
+    if (cmd == "OVERLAY") {
+        const std::string a = toUpperCopy(args);
+        if (a == "ON") {
+            overlay_enabled_ = true;
+            SANCAK_LOG_INFO("Remote OVERLAY:ON");
+        } else if (a == "OFF") {
+            overlay_enabled_ = false;
+            SANCAK_LOG_INFO("Remote OVERLAY:OFF");
+        } else {
+            SANCAK_LOG_WARN("Bilinmeyen OVERLAY arg: '{}'", std::string(args));
+        }
+        return;
+    }
+
+    if (cmd == "FP16") {
+        const std::string a = toUpperCopy(args);
+        const bool requested = (a == "ON");
+        if (!(a == "ON" || a == "OFF")) {
+            SANCAK_LOG_WARN("Bilinmeyen FP16 arg: '{}'", std::string(args));
+            return;
+        }
+
+        // Testlerde initialize() çağırmadan komutlar test ediliyor.
+        // Bu yüzden model path'lerini lazy-init ediyoruz.
+        if (yolo_model_fp32_path_.empty()) {
+            yolo_model_fp32_path_ = config_.yolo.model_path;
+        }
+        if (yolo_model_fp16_path_.empty()) {
+            yolo_model_fp16_path_ = deriveFp16ModelPath(yolo_model_fp32_path_);
+        }
+
+        const std::string targetModelPath = requested ? yolo_model_fp16_path_ : yolo_model_fp32_path_;
+
+#if defined(SANCAK_ENABLE_TEST_HOOKS)
+        fp16_enabled_ = requested;
+        config_.yolo.model_path = targetModelPath;
+        SANCAK_LOG_INFO("Remote FP16:{} (TEST_HOOKS) model='{}'", requested ? "ON" : "OFF", config_.yolo.model_path);
+        return;
+#else
+        if (requested && !fileExists(targetModelPath)) {
+            SANCAK_LOG_WARN("FP16 modeli bulunamadı: '{}' (FP32'de kalınıyor)", targetModelPath);
+            fp16_enabled_ = false;
+            config_.yolo.model_path = yolo_model_fp32_path_;
+            return;
+        }
+
+        if (fp16_enabled_ == requested && config_.yolo.model_path == targetModelPath) {
+            SANCAK_LOG_DEBUG("FP16 zaten istenen durumda: {}", requested ? "ON" : "OFF");
+            return;
+        }
+
+        const auto oldFp16 = fp16_enabled_;
+        const auto oldModel = config_.yolo.model_path;
+
+        fp16_enabled_ = requested;
+        config_.yolo.model_path = targetModelPath;
+
+        SANCAK_LOG_WARN("Remote FP16:{} -> YOLO yeniden yükleniyor (model='{}')", requested ? "ON" : "OFF", config_.yolo.model_path);
+        if (!yolo_.initialize(config_.yolo)) {
+            SANCAK_LOG_ERROR("YOLO yeniden yükleme başarısız. Eski modele geri dönülüyor.");
+            fp16_enabled_ = oldFp16;
+            config_.yolo.model_path = oldModel;
+            (void)yolo_.initialize(config_.yolo);
+        }
+        return;
+#endif
+    }
+
+    if (cmd == "MOVE") {
+        const std::string a = toUpperCopy(args);
+        constexpr float kStepDeg = 1.0f;
+
+        float nextPan = current_pan_deg_;
+        float nextTilt = current_tilt_deg_;
+
+        if (a == "LEFT") {
+            nextPan -= kStepDeg;
+        } else if (a == "RIGHT") {
+            nextPan += kStepDeg;
+        } else if (a == "FORWARD") {
+            nextTilt += kStepDeg;
+        } else if (a == "BACK") {
+            nextTilt -= kStepDeg;
+        } else {
+            SANCAK_LOG_WARN("Bilinmeyen MOVE arg: '{}'", std::string(args));
+            return;
+        }
+
+        nextPan = std::clamp(nextPan, config_.geofence.pan_min_deg, config_.geofence.pan_max_deg);
+        nextTilt = std::clamp(nextTilt, config_.geofence.tilt_min_deg, config_.geofence.tilt_max_deg);
+
+        current_pan_deg_ = nextPan;
+        current_tilt_deg_ = nextTilt;
+
+        if (turret_controller_) {
+            turret_controller_->sendCommand(current_pan_deg_, current_tilt_deg_, false);
+        }
+        return;
+    }
+
+    if (cmd == "GEOFENCE") {
+        float panMin = 0.0f, panMax = 0.0f, tiltMin = 0.0f, tiltMax = 0.0f;
+        if (!parseFourFloats(args, panMin, panMax, tiltMin, tiltMax)) {
+            SANCAK_LOG_WARN("GEOFENCE parse edilemedi: '{}'", std::string(args));
+            return;
+        }
+        if (panMin > panMax) std::swap(panMin, panMax);
+        if (tiltMin > tiltMax) std::swap(tiltMin, tiltMax);
+
+        config_.geofence.pan_min_deg = panMin;
+        config_.geofence.pan_max_deg = panMax;
+        config_.geofence.tilt_min_deg = tiltMin;
+        config_.geofence.tilt_max_deg = tiltMax;
+
+        // State machine geofence'ini de güncelle
+        if (combat_state_machine_) {
+            core::Geofence fence;
+            fence.pan_min = panMin;
+            fence.pan_max = panMax;
+            fence.tilt_min = tiltMin;
+            fence.tilt_max = tiltMax;
+            combat_state_machine_->setGeofence(fence);
+        }
+
+        // Anlık pan/tilt geofence dışında kaldıysa kırp
+        current_pan_deg_ = std::clamp(current_pan_deg_, panMin, panMax);
+        current_tilt_deg_ = std::clamp(current_tilt_deg_, tiltMin, tiltMax);
+
+        SANCAK_LOG_INFO("Remote GEOFENCE: pan[{},{}] tilt[{},{}]", panMin, panMax, tiltMin, tiltMax);
+        return;
+    }
+
+    if (cmd == "SET") {
+        // Format: KEY,VALUE  (ör: H_MIN,10)
+        const auto comma = args.find(',');
+        if (comma == std::string_view::npos) {
+            SANCAK_LOG_WARN("SET format hatası: '{}'", std::string(args));
+            return;
+        }
+        const std::string key = toUpperCopy(trimView(args.substr(0, comma)));
+        const std::string_view valSv = trimView(args.substr(comma + 1));
+
+        int v = 0;
+        if (!parseInt(valSv, v)) {
+            SANCAK_LOG_WARN("SET value parse edilemedi: key='{}' val='{}'", key, std::string(valSv));
+            return;
+        }
+
+        // PC UI'daki H/S/V slider'larını balon HSV aralığına mapliyoruz.
+        // (IFF için ayrı komut tasarlanabilir; şu an UI tek set gönderiyor.)
+        if (key == "H_MIN") config_.balloon.h_min = std::clamp(v, 0, 179);
+        else if (key == "H_MAX") config_.balloon.h_max = std::clamp(v, 0, 179);
+        else if (key == "S_MIN") config_.balloon.s_min = std::clamp(v, 0, 255);
+        else if (key == "S_MAX") config_.balloon.s_max = std::clamp(v, 0, 255);
+        else if (key == "V_MIN") config_.balloon.v_min = std::clamp(v, 0, 255);
+        else if (key == "V_MAX") config_.balloon.v_max = std::clamp(v, 0, 255);
+        else {
+            SANCAK_LOG_WARN("SET bilinmeyen key: '{}'", key);
+            return;
+        }
+
+        if (config_.balloon.h_min > config_.balloon.h_max) std::swap(config_.balloon.h_min, config_.balloon.h_max);
+
+        segmentor_.updateHsvRange(
+            config_.balloon.h_min, config_.balloon.h_max,
+            config_.balloon.s_min, config_.balloon.s_max,
+            config_.balloon.v_min, config_.balloon.v_max);
+
+        ConfigManager::instance().setBalloonHsv(
+            config_.balloon.h_min, config_.balloon.h_max,
+            config_.balloon.s_min, config_.balloon.s_max,
+            config_.balloon.v_min, config_.balloon.v_max);
+
+        return;
+    }
+
+    if (cmd == "ORDER") {
+        // Format: F16,IHA,HELI,MISSILE (sıra = öncelik)
+        std::map<core::TargetClass, core::TargetRule> rules = ConfigManager::instance().getTargetRules();
+        if (rules.empty()) {
+            rules[core::TargetClass::Drone] = {core::TargetClass::Drone, 0.0f, 50.0f, 2};
+            rules[core::TargetClass::F16] = {core::TargetClass::F16, 0.0f, 50.0f, 1};
+            rules[core::TargetClass::Helicopter] = {core::TargetClass::Helicopter, 0.0f, 50.0f, 3};
+            rules[core::TargetClass::Missile] = {core::TargetClass::Missile, 0.0f, 50.0f, 0};
+        }
+
+        auto mapName = [](const std::string& name) -> std::optional<core::TargetClass> {
+            if (name == "F16") return core::TargetClass::F16;
+            if (name == "IHA" || name == "DRONE") return core::TargetClass::Drone;
+            if (name == "HELI" || name == "HELICOPTER") return core::TargetClass::Helicopter;
+            if (name == "MISSILE" || name == "FUZE" || name == "BALISTIK_FUZE") return core::TargetClass::Missile;
+            return std::nullopt;
+        };
+
+        int prio = 0;
+        std::string_view rest = args;
+        while (!rest.empty()) {
+            const auto comma = rest.find(',');
+            std::string_view token = (comma == std::string_view::npos) ? rest : rest.substr(0, comma);
+            rest = (comma == std::string_view::npos) ? std::string_view{} : rest.substr(comma + 1);
+            token = trimView(token);
+            if (token.empty()) continue;
+
+            const std::string upper = toUpperCopy(token);
+            if (auto tc = mapName(upper)) {
+                auto it = rules.find(*tc);
+                if (it != rules.end()) {
+                    it->second.priority = prio;
+                } else {
+                    core::TargetRule r;
+                    r.target = *tc;
+                    r.min_range_m = 0.0f;
+                    r.max_range_m = 50.0f;
+                    r.priority = prio;
+                    rules[*tc] = r;
+                }
+                prio++;
+            }
+        }
+
+        if (combat_state_machine_) {
+            combat_state_machine_->setRules(std::move(rules));
+        }
+
+        SANCAK_LOG_INFO("Remote ORDER uygulandı ({} hedef)", prio);
+        return;
+    }
+
+    SANCAK_LOG_DEBUG("Bilinmeyen komut: '{}'", std::string(s));
 }
 
 double CombatPipeline::updateFps() {

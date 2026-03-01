@@ -160,6 +160,23 @@ struct NetworkConfig {
     int         udp_mtu_bytes = 1200;    ///< UDP payload hedefi
 };
 
+/// Lidar ayarları (opsiyonel)
+struct LidarConfig {
+    bool  enabled = false;
+    bool  use_mock = true;
+
+    // Mock davranışı
+    float mock_fixed_distance_m = 0.0f; ///< >0 ise sabit mesafe döner, değilse random
+    float mock_min_distance_m = 3.0f;
+    float mock_max_distance_m = 20.0f;
+    float mock_update_hz = 20.0f;
+
+    // Lidar sensörünün taret merkezine ofseti (metre)
+    float offset_x_m = 0.0f;
+    float offset_y_m = 0.0f;
+    float offset_z_m = 0.0f;
+};
+
 /// Tüm ayarları toplayan üst yapı
 struct SystemConfig {
     CameraConfig     camera;
@@ -173,6 +190,7 @@ struct SystemConfig {
     IffConfig        iff;
     SerialConfig     serial;
     NetworkConfig    network;
+    LidarConfig      lidar;
 
     /// Genel
     bool headless       = true;   ///< Monitörsüz çalışma

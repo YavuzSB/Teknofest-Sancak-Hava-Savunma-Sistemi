@@ -33,8 +33,15 @@
 
 #include <memory>
 #include <chrono>
+#include <string>
+#include <optional>
+#include <mutex>
+#include <thread>
+#include <atomic>
 
 namespace sancak {
+
+class ILidarSensor;
 
 /**
  * @class CombatPipeline
@@ -102,6 +109,32 @@ public:
     /// FPS hesapla
     double updateFps();
 
+#if defined(SANCAK_ENABLE_TEST_HOOKS)
+    void _testSetConfig(const SystemConfig& cfg) { config_ = cfg; }
+    const SystemConfig& _testConfig() const { return config_; }
+
+    void _testSetPoseDeg(float pan_deg, float tilt_deg) {
+        current_pan_deg_ = pan_deg;
+        current_tilt_deg_ = tilt_deg;
+    }
+    float _testPanDeg() const { return current_pan_deg_; }
+    float _testTiltDeg() const { return current_tilt_deg_; }
+
+    bool _testDetectionEnabled() const { return detection_enabled_; }
+    bool _testOverlayEnabled() const { return overlay_enabled_; }
+
+    bool _testFp16Enabled() const { return fp16_enabled_; }
+    const std::string& _testYoloModelPath() const { return config_.yolo.model_path; }
+    const std::string& _testYoloModelFp32Path() const { return yolo_model_fp32_path_; }
+    const std::string& _testYoloModelFp16Path() const { return yolo_model_fp16_path_; }
+
+    void _testHandleNetworkCommand(const std::string& line) { handleNetworkCommand(line); }
+#endif
+
+private:
+    void consumeNetworkCommands();
+    void handleNetworkCommand(const std::string& line);
+
     // Modüller
     YoloDetector      yolo_;
     BalloonSegmentor  segmentor_;
@@ -130,6 +163,22 @@ public:
     bool running_ = false;
     TimePoint last_frame_time_;
     double fps_ = 0.0;
+
+    // Uzaktan kontrol (PC -> RasPi) durumları
+    bool detection_enabled_ = true; // <DETECT:START/STOP>
+    bool overlay_enabled_ = true;   // <OVERLAY:ON/OFF>
+
+    // Model seçimi (FP32/FP16)
+    bool fp16_enabled_ = false; // <FP16:ON/OFF>
+    std::string yolo_model_fp32_path_;
+    std::string yolo_model_fp16_path_;
+
+    // Lidar (opsiyonel) - arka planda güncellenen thread-safe cache
+    std::unique_ptr<ILidarSensor> lidar_;
+    std::thread lidar_thread_;
+    std::atomic<bool> lidar_running_{false};
+    mutable std::mutex lidar_mutex_;
+    std::optional<float> lidar_distance_m_;
 };
 
 } // namespace sancak
