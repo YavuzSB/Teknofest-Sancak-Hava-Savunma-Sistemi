@@ -215,7 +215,12 @@ bool CombatPipeline::initialize(const SystemConfig& config) {
     // 6. Seri port aç
     if (config_.serial.enabled) {
         // Yeni protokol sürücüsü (kuyruklu + auto-reconnect)
-        turret_controller_ = std::make_unique<TurretController>(config_.serial.port, config_.serial.baud_rate);
+        std::string prot = config_.serial.protocol;
+        std::transform(prot.begin(), prot.end(), prot.begin(), [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
+        const TurretProtocol tp = (prot == "binary") ? TurretProtocol::Binary : TurretProtocol::Ascii;
+        turret_controller_ = std::make_unique<TurretController>(config_.serial.port, config_.serial.baud_rate, tp);
     }
 
     // 7. Ağ katmanı (opsiyonel)

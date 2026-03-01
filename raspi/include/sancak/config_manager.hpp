@@ -145,6 +145,9 @@ struct SerialConfig {
     int         baud_rate  = 115200;
     int         timeout_ms = 100;
     bool        enabled    = true;
+
+    // UART protokol modu: "ascii" (mevcut) veya "binary" (CRC16 frame)
+    std::string protocol   = "ascii";
 };
 
 /// Ağ (GCS iletişimi) ayarları

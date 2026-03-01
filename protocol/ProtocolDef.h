@@ -17,6 +17,7 @@ enum class MsgType : uint8_t {
     Aim     = 0x01,
     Status  = 0x02,
     Trigger = 0x03,
+    SafeLock = 0x04,
 };
 
 #pragma pack(push, 1)
@@ -42,6 +43,10 @@ struct StatusPayload {
 
 struct TriggerPayload {
     uint8_t fire;
+};
+
+struct SafeLockPayload {
+    uint8_t enable; // 1: SafeLock aktif, 0: normal
 };
 
 #pragma pack(pop)

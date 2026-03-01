@@ -213,6 +213,10 @@ bool ConfigManager::loadFromFile(const std::string& path) {
             int en = 1;
             node["enabled"] >> en;
             config_.serial.enabled = (en != 0);
+
+            if (!node["protocol"].empty()) {
+                node["protocol"] >> config_.serial.protocol;
+            }
         }
 
         // --- Network (opsiyonel) ---
@@ -427,6 +431,7 @@ bool ConfigManager::saveToFile(const std::string& path) const {
         fs << "baud_rate"  << config_.serial.baud_rate;
         fs << "timeout_ms" << config_.serial.timeout_ms;
         fs << "enabled"    << (config_.serial.enabled ? 1 : 0);
+        fs << "protocol"   << config_.serial.protocol;
         fs << "}";
 
         // --- Network (opsiyonel) ---
