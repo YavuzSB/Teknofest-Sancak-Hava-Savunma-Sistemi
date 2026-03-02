@@ -65,6 +65,7 @@ private:
     void renderMissionPanel();
     void renderCalibrationPanel();
     void renderConsolePanel();
+    void renderSettingsPanel();
     void renderStatusBar();
 
     // ── Aksiyonlar ──────────────────────────────────────────────────────────
@@ -89,6 +90,7 @@ private:
     bool m_connected      = false;
     bool m_fullAuto       = false;
     bool m_overlayEnabled = true;
+    bool m_fp16Enabled    = true;
     bool m_shouldQuit     = false;
     int  m_activeTab      = 0;
 

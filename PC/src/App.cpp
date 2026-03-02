@@ -31,6 +31,9 @@ App::App() {
         {"V_MIN",   0, 0, 255},
         {"V_MAX", 255, 0, 255},
     };
+
+    // Varsayılan: FP16 quantization açık
+    m_fp16Enabled = true;
 }
 
 App::~App() {
@@ -310,6 +313,11 @@ void App::render(GLFWwindow* window) {
             renderControlPanel();
             ImGui::EndTabItem();
         }
+        if (ImGui::BeginTabItem("AYARLAR")) {
+            m_activeTab = 4;
+            renderSettingsPanel();
+            ImGui::EndTabItem();
+        }
         if (ImGui::BeginTabItem("GOREV")) {
             m_activeTab = 2;
             renderMissionPanel();
@@ -334,6 +342,34 @@ void App::render(GLFWwindow* window) {
     renderStatusBar();
 
     ImGui::End();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Ayarlar Paneli
+// ═══════════════════════════════════════════════════════════════════════════
+
+void App::renderSettingsPanel() {
+    const float fullW = ImGui::GetContentRegionAvail().x;
+
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.0f, 1.0f, 0.255f, 0.6f));
+    ImGui::BeginChild("##Settings", ImVec2(fullW, 0.0f), true);
+
+    ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.255f, 1.0f), "AYARLAR");
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    const bool prev = m_fp16Enabled;
+    if (ImGui::Checkbox("FP16 Quantization (ONNX Model)", &m_fp16Enabled)) {
+        if (m_telemetry && m_telemetry->getState() == TelemetryClient::State::Connected) {
+            m_telemetry->sendCommand(m_fp16Enabled ? "<FP16:ON>" : "<FP16:OFF>");
+        }
+        if (prev != m_fp16Enabled) {
+            setStatus(m_fp16Enabled ? "FP16 acik" : "FP16 kapali", 1.5f);
+        }
+    }
+
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -729,6 +765,10 @@ void App::renderStatusBar() {
             switch (cur) {
             case TelemetryClient::State::Connected:
                 addLog(LogLevel::Info, "Telemetri baglandi");
+                // Bağlantı kurulduğunda mevcut ayarları RasPi'ye push et
+                if (m_telemetry) {
+                    m_telemetry->sendCommand(m_fp16Enabled ? "<FP16:ON>" : "<FP16:OFF>");
+                }
                 break;
             case TelemetryClient::State::Connecting:
                 addLog(LogLevel::Info, "Telemetri baglaniyor...");

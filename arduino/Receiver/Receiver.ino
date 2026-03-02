@@ -4,10 +4,7 @@
 // CRC: CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF)
 
 #include <Arduino.h>
-#include "ProtocolDef.h" // Repo kökünde: protocol/ProtocolDef.h
-
-// Arduino IDE için pratik: Bu dosyayı Receiver.ino ile aynı klasöre kopyalayın
-// veya include path'inize repo kökündeki protocol/ klasörünü ekleyin.
+#include "ProtocolDef.h" // Aynı klasördeki self-contained tanımlar.
 
 static constexpr uint16_t kCrcInit = 0xFFFF;
 static constexpr uint32_t kTimeoutMs = 20;

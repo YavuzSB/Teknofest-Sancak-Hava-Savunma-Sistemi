@@ -80,6 +80,14 @@ public:
         return {CombatState::Searching, -1};
     }
 
+    void setGeofence(const Geofence& geofence) {
+        geofence_ = geofence;
+    }
+
+    void setRules(std::map<TargetClass, TargetRule> rules) {
+        target_rules_ = std::move(rules);
+    }
+
 private:
     std::map<TargetClass, TargetRule> target_rules_;
     Geofence geofence_;

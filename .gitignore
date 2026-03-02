@@ -1,6 +1,7 @@
 # Build ve derleme dosyaları
 build/
 build-mingw/
+build-ninja/
 *.o
 *.obj
 *.exe

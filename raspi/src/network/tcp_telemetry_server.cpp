@@ -61,6 +61,43 @@ void TcpTelemetryServer::stop() {
 
     std::lock_guard<std::mutex> lock(out_mutex_);
     while (!out_queue_.empty()) out_queue_.pop();
+
+    {
+        std::lock_guard<std::mutex> lockCmd(cmd_mutex_);
+        cmd_queue_.clear();
+    }
+}
+
+bool TcpTelemetryServer::tryPopCommand(std::string& outCommand) {
+    std::lock_guard<std::mutex> lock(cmd_mutex_);
+    if (cmd_queue_.empty()) return false;
+    outCommand = std::move(cmd_queue_.front());
+    cmd_queue_.pop_front();
+    return true;
+}
+
+void TcpTelemetryServer::enqueueCommand(std::string line) {
+    // trim (whitespace/newline already removed)
+    auto ltrim = [](std::string& s) {
+        const auto b = s.find_first_not_of(" \t\r\n");
+        s = (b == std::string::npos) ? "" : s.substr(b);
+    };
+    auto rtrim = [](std::string& s) {
+        const auto e = s.find_last_not_of(" \t\r\n");
+        s = (e == std::string::npos) ? "" : s.substr(0, e + 1);
+    };
+    ltrim(line);
+    rtrim(line);
+    if (line.empty()) return;
+
+    std::lock_guard<std::mutex> lock(cmd_mutex_);
+    if (cmd_queue_.size() >= max_cmd_queue_) {
+        // backpressure: en eski komutları düşür.
+        while (cmd_queue_.size() >= max_cmd_queue_) {
+            cmd_queue_.pop_front();
+        }
+    }
+    cmd_queue_.push_back(std::move(line));
 }
 
 void TcpTelemetryServer::publishAimResult(const sancak::AimResult& aim, std::uint32_t frame_id) {
@@ -227,7 +264,9 @@ void TcpTelemetryServer::serverLoop() {
                 for (;;) {
                     const auto pos = inLineBuf.find('\n');
                     if (pos == std::string::npos) break;
+                    std::string line = inLineBuf.substr(0, pos);
                     inLineBuf.erase(0, pos + 1);
+                    enqueueCommand(std::move(line));
                 }
             } else if (recvd == 0) {
                 connectionOk = false;

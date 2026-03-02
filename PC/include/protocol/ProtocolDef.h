@@ -1,4 +1,6 @@
 #pragma once
+// DİKKAT: Bu dosyada yapılan değişiklikler PC ve RasPi kopyalarında birebir aynı tutulmalıdır!
+// (PC/include/protocol/ProtocolDef.h ve raspi/include/protocol/ProtocolDef.h SENKRON olmalı)
 
 // Ortak UART protokol tanımları (Raspberry Pi 5 <-> Arduino/ESP32)
 // Frame:

@@ -62,17 +62,15 @@ float BallisticsManager::calculateDrop(float distance_m) const {
     return drop;
 }
 
-float BallisticsManager::calculateLead(float target_speed_mps, float distance_m) const {
+float BallisticsManager::calculateLead(float target_speed_mps, float distance_m, float t_processing_s) const {
     if (distance_m <= 0.0f || config_.muzzle_velocity_mps <= 0.0f) return 0.0f;
 
     // Toplam gecikme:
     //   1. Uçuş süresi
     float t_flight = distance_m / config_.muzzle_velocity_mps;
 
-    //   2. İşleme gecikmesi (yaklaşık 40ms YOLO + 10ms mekanik)
-    constexpr float t_processing = 0.050f;  // 50ms
-
-    float t_total = t_flight + t_processing;
+    //   2. İşleme gecikmesi (YOLO + pipeline, dinamik)
+    float t_total = t_flight + t_processing_s;
 
     // Önleme mesafesi = hız × toplam gecikme
     return target_speed_mps * t_total;
@@ -129,7 +127,8 @@ cv::Point2f BallisticsManager::applyCorrection(const cv::Point2f& raw_center, fl
 
 BallisticCorrection BallisticsManager::calculate(float distance_m,
                                                   const cv::Point2f& target_velocity,
-                                                  double fps) const {
+                                                  double fps,
+                                                  double t_processing_s) const {
     BallisticCorrection corr;
 
     if (distance_m <= 0.0f) return corr;
@@ -148,27 +147,22 @@ BallisticCorrection BallisticsManager::calculate(float distance_m,
     float target_speed_mps = 0.0f;
     if (fps > 0.0) {
         // Piksel/frame → m/s dönüşümü (yaklaşık)
-        // 1 piksel ≈ distance * (1 / focal_length) metre
         float px_to_m = distance_m / 600.0f;  // odak uzaklığı yaklaşık
         float speed_px_per_s = std::sqrt(target_velocity.x * target_velocity.x +
                                           target_velocity.y * target_velocity.y)
                                * static_cast<float>(fps);
         target_speed_mps = speed_px_per_s * px_to_m;
     }
-    corr.lead_m = calculateLead(target_speed_mps, distance_m);
+    corr.lead_m = calculateLead(target_speed_mps, distance_m, static_cast<float>(t_processing_s));
 
     // 5. Toplam piksel düzeltmesi hesapla
     // Lookup table'dan gelen düzeltme (paralaks + düşüş dahil)
     corr.dx_px = table_dx + config_.manual_offset_x_px;
     corr.dy_px = table_dy + config_.manual_offset_y_px;
 
-    // Önleme düzeltmesini piksel olarak ekle
-    if (fps > 0.0) {
-        float t_flight = distance_m / config_.muzzle_velocity_mps;
-        float t_total  = t_flight + 0.050f;
-        corr.dx_px += target_velocity.x * static_cast<float>(fps) * t_total / static_cast<float>(fps);
-        corr.dy_px += target_velocity.y * static_cast<float>(fps) * t_total / static_cast<float>(fps);
-    }
+    // Lead düzeltmesini sadece x ekseninde uygula (örnek model)
+    float lead_px = corr.lead_m / (distance_m / 600.0f); // m → px
+    corr.dx_px += lead_px;
 
     return corr;
 }

@@ -32,36 +32,48 @@ function Is-ExcludedPath([string]$fullPath, [string]$repoRoot, [string]$outDirNa
     '(^|\\)obj(\\|$)'
   )
 
-  foreach ($rx in $excludedDirRegexes) {
-    if ($relLower -match $rx) { return $true }
-  }
 
-  # Exclude any previous exports (ai_share, ai_share_2mb, ai_share_plain_*, ...)
-  if ($relLower -match '(^|\\)ai_share[^\\]*(\\|$)') { return $true }
 
-  # Exclude the current output directory by name (in case it's not ai_share*)
-  if ($outDirNameLower -and ($relLower -match ('(^|\\)' + [regex]::Escape($outDirNameLower) + '(\\|$)'))) {
-    return $true
-  }
 
-  # Exclude common binaries / large assets
-  $ext = [IO.Path]::GetExtension($fullPath).ToLowerInvariant()
-  $excludedExt = @(
-    ".onnx",
-    ".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp",
-    ".mp4", ".avi", ".mov", ".mkv",
-    ".zip", ".7z", ".rar",
-    ".exe", ".dll", ".so", ".dylib",
-    ".a", ".lib",
-    ".obj", ".o",
-    ".pdb",
-    ".bin"
-  )
 
-  if (-not $IncludeModels -and $ext -eq ".onnx") { return $true }
-  if ($excludedExt -contains $ext) { return $true }
 
-  return $false
+    # _extra/ altı ise...
+    if ($relLower -like '_extra*') {
+      # _extra/ozet.md veya _extra/teknik_dokuman/* ise export et
+      if ($relLower -eq '_extra\ozet.md' -or $relLower -like '_extra\teknik_dokuman\*') {
+        # izin ver
+      } else {
+        return $true
+      }
+    }
+
+    foreach ($rx in $excludedDirRegexes) {
+      if ($relLower -match $rx) { return $true }
+    }
+
+    if ($relLower -match '(^|\\)ai_share[^\\]*(\\|$)') { return $true }
+
+    if ($outDirNameLower -and ($relLower -match ('(^|\\)' + [regex]::Escape($outDirNameLower) + '(\\|$)'))) {
+      return $true
+    }
+
+    $ext = [IO.Path]::GetExtension($fullPath).ToLowerInvariant()
+    $excludedExt = @(
+      ".onnx",
+      ".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp",
+      ".mp4", ".avi", ".mov", ".mkv",
+      ".zip", ".7z", ".rar",
+      ".exe", ".dll", ".so", ".dylib",
+      ".a", ".lib",
+      ".obj", ".o",
+      ".pdb",
+      ".bin"
+    )
+
+    if (-not $IncludeModels -and $ext -eq ".onnx") { return $true }
+    if ($excludedExt -contains $ext) { return $true }
+
+    return $false
 }
 
 function Try-ReadTextFile([string]$path) {

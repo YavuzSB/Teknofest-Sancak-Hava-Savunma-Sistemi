@@ -17,6 +17,10 @@
 #include "sancak/config_manager.hpp"
 #include "sancak/logger.hpp"
 
+#include "sancak/serial_comm.hpp"
+#include <thread>
+#include <atomic>
+
 #include <iostream>
 #include <string>
 #include <cstring>
@@ -76,6 +80,8 @@ int main(int argc, char** argv) {
     float offset_x = std::numeric_limits<float>::quiet_NaN();
     float offset_y = std::numeric_limits<float>::quiet_NaN();
 
+    bool serial_test_mode = false;
+
     // --- Komut satırı argümanları ---
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -94,6 +100,7 @@ int main(int argc, char** argv) {
         else if (arg == "--log-level" && i + 1 < argc)  { log_level  = argv[++i]; }
         else if (arg == "--offset-x" && i + 1 < argc)   { offset_x = std::stof(argv[++i]); }
         else if (arg == "--offset-y" && i + 1 < argc)   { offset_y = std::stof(argv[++i]); }
+        else if (arg == "--serial-test")                { serial_test_mode = true; }
         else {
             std::cerr << "Bilinmeyen argüman: " << arg << "\n";
             printHelp(argv[0]);
@@ -102,6 +109,34 @@ int main(int argc, char** argv) {
     }
 
     printBanner();
+
+    if (serial_test_mode) {
+        sancak::SerialConfig serial_cfg;
+        serial_cfg.port = "/dev/ttyUSB0"; // Gerekirse configten veya arg'dan alınabilir
+        serial_cfg.baud_rate = 115200;
+        serial_cfg.enabled = true;
+
+        sancak::SerialComm serial;
+        if (!serial.open(serial_cfg)) {
+            SANCAK_LOG_FATAL("UART portu açılamadı!");
+            return 2;
+        }
+
+        std::atomic<bool> running{true};
+        auto cb = [&](const sancak::GenericPacket& pkt) {
+            SANCAK_LOG_INFO("[UART] Paket geldi: type=0x{:02X} len={} crc=0x{:04X}",
+                static_cast<int>(pkt.type), pkt.payload.size(), pkt.crc);
+        };
+        serial.startAsyncRead(cb);
+
+        SANCAK_LOG_INFO("UART async okuma başlatıldı. Çıkmak için Ctrl+C.");
+        while (running.load()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        }
+        serial.stopAsyncRead();
+        serial.close();
+        return 0;
+    }
 
     // --- Konfigürasyon yükle ---
     auto& cfg_mgr = sancak::ConfigManager::instance();

@@ -13,9 +13,16 @@
 #include "sancak/types.hpp"
 #include "sancak/config_manager.hpp"
 
-#include <opencv2/dnn.hpp>
 #include <vector>
 #include <string>
+#include <memory>
+#include <atomic>
+#include <shared_mutex>
+
+#if defined(SANCAK_USE_ONNXRUNTIME)
+// ONNX Runtime C++ API
+#include <onnxruntime_cxx_api.h>
+#endif
 
 namespace sancak {
 
@@ -50,14 +57,22 @@ public:
     [[nodiscard]] std::vector<Detection> detect(const cv::Mat& frame);
 
     /// Son çıkarım süresi (ms)
-    [[nodiscard]] double lastInferenceMs() const { return last_inference_ms_; }
+    [[nodiscard]] double lastInferenceMs() const { return last_inference_ms_.load(std::memory_order_relaxed); }
 
     /// Model yüklü mü?
-    [[nodiscard]] bool isReady() const { return ready_; }
+    [[nodiscard]] bool isReady() const { return ready_.load(std::memory_order_acquire); }
 
 private:
     /// Letterbox ön-işleme (aspect ratio korunarak boyutlandırma)
-    static cv::Mat letterbox(const cv::Mat& src, cv::Point2f& scale, cv::Point2f& pad);
+    [[nodiscard]] cv::Mat letterbox(const cv::Mat& src, cv::Point2f& scale, cv::Point2f& pad) const;
+
+#if defined(SANCAK_USE_ONNXRUNTIME)
+    /// OpenCV cv::Mat (BGR) -> float32 [1,3,H,W] NCHW buffer
+    [[nodiscard]] std::vector<float> makeInputTensorNchw(const cv::Mat& letterboxed_bgr) const;
+
+    /// Ort::Session input/output isimlerini cache'ler
+    void cacheIoNames();
+#endif
 
     /// Model çıkış tensörünü parse eder
     [[nodiscard]] std::vector<Detection> parseOutput(const cv::Mat& output,
@@ -68,10 +83,26 @@ private:
     /// TargetClass eşleştirmesi
     [[nodiscard]] TargetClass mapClassId(int class_id) const;
 
-    cv::dnn::Net net_;
     YoloConfig   config_;
-    bool         ready_ = false;
-    double       last_inference_ms_ = 0.0;
+    std::atomic<bool>   ready_{false};
+    std::atomic<double> last_inference_ms_{0.0};
+
+    // initialize() ile detect() aynı anda çağrılırsa data race olmaması için.
+    // detect() tarafında shared lock → paralel infer mümkün.
+    mutable std::shared_mutex session_mutex_;
+
+#if defined(SANCAK_USE_ONNXRUNTIME)
+    // Ort objeleri üye olarak tutulmalı (performans + tekrar kullanım)
+    std::unique_ptr<Ort::Env> env_;
+    std::unique_ptr<Ort::Session> session_;
+    std::unique_ptr<Ort::SessionOptions> session_options_;
+    std::string input_name_;
+    std::string output_name_;
+#else
+    // Geri uyumluluk: ONNX Runtime yoksa OpenCV DNN ile derlenebilir.
+    // (CMake'de SANCAK_USE_ONNXRUNTIME=ON önerilir.)
+    cv::dnn::Net net_;
+#endif
 };
 
 } // namespace sancak

@@ -53,7 +53,8 @@ public:
      */
     [[nodiscard]] BallisticCorrection calculate(float distance_m,
                                    const cv::Point2f& target_velocity = {0, 0},
-                                   double fps = 30.0) const;
+                                   double fps = 30.0,
+                                   double t_processing_s = 0.050) const;
 
     /**
      * @brief Paralaks düzeltme açısını hesaplar
@@ -75,7 +76,7 @@ public:
      * @param distance_m       Hedef mesafesi
      * @return Önleme mesafesi (metre)
      */
-    [[nodiscard]] float calculateLead(float target_speed_mps, float distance_m) const;
+    [[nodiscard]] float calculateLead(float target_speed_mps, float distance_m, float t_processing_s = 0.050f) const;
 
     /**
      * @brief Lookup table'dan doğrusal interpolasyon ile düzeltme al

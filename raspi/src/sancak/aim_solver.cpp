@@ -33,18 +33,18 @@ void AimSolver::initialize(const BallisticsConfig& balConfig,
     SANCAK_LOG_INFO("Aim Solver başlatıldı");
 }
 
+
 AimPoint AimSolver::solve(const BalloonResult& balloon,
-                           const Detection& detection,
-                           const cv::Point2f& velocity,
-                           double fps,
-                           const cv::Size& frame_size,
-                           double inference_delay_ms,
-                           std::optional<float> lidar_distance_m,
-                           const cv::Point3f& lidar_offset_m) const {
+                         const Detection& detection,
+                         const cv::Point2f& velocity,
+                         double fps,
+                         const cv::Size& frame_size,
+                         double projectile_velocity_mps,
+                         double inference_delay_ms,
+                         std::optional<float> lidar_distance_m,
+                         const cv::Point3f& lidar_offset_m) const {
     AimPoint aim;
-
     if (!balloon.found) return aim;
-
     aim.raw_center = balloon.center;
 
     // 1. Mesafe tahmini (balondan + bbox'tan birleşik)
@@ -54,7 +54,6 @@ AimPoint AimSolver::solve(const BalloonResult& balloon,
         0.25F  // ortalama hedef yüksekliği ~25cm
     );
     aim.distance_m = dist.distance_m;
-
     if (lidar_distance_m.has_value() && lidar_distance_m.value() > 0.0f) {
         const float corrected = adjustLidarRangeToTurretCenter(lidar_distance_m.value(), lidar_offset_m);
         if (corrected > 0.0f) {
@@ -62,25 +61,42 @@ AimPoint AimSolver::solve(const BalloonResult& balloon,
         }
     }
 
-    // 2. Balistik düzeltme hesapla (inference gecikmesi dahil)
-    double t_processing_s = inference_delay_ms * 0.001;
-    aim.correction = ballistics_.calculate(aim.distance_m, velocity, fps, t_processing_s);
+    // 2. Hedefin hızını px/frame'den m/s'ye çevir
+    float px_to_m = (aim.distance_m > 0.0f) ? (aim.distance_m / 600.0f) : 0.0f; // odak uzaklığı yaklaşık
+    float vx_mps = velocity.x * static_cast<float>(fps) * px_to_m;
+    float vy_mps = velocity.y * static_cast<float>(fps) * px_to_m;
 
-    // 3. Düzeltmeleri uygula
-    aim.corrected.x = balloon.center.x + aim.correction.dx_px;
-    aim.corrected.y = balloon.center.y + aim.correction.dy_px;
+    // 3. Mermi uçuş süresi (ToF)
+    float distance = aim.distance_m;
+    float muzzle_v = (projectile_velocity_mps > 0.0) ? static_cast<float>(projectile_velocity_mps) : 70.0f;
+    float t_flight = (muzzle_v > 0.0f) ? (distance / muzzle_v) : 0.0f;
+    float t_processing = static_cast<float>(inference_delay_ms * 0.001);
+    float t_total = t_flight + t_processing;
 
-    // 4. Frame sınırlarına kırp
+    // 4. Gelecek konum kestirimi (lead prediction)
+    float lead_x = vx_mps * t_total;
+    float lead_y = vy_mps * t_total;
+    cv::Point2f lead_point = balloon.center + cv::Point2f(lead_x / px_to_m, lead_y / px_to_m); // px cinsinden
+
+    // 5. Yerçekimi etkisi (balistik düşüş)
+    float drop_m = 0.5f * static_cast<float>(kGravity) * t_flight * t_flight;
+    float drop_px = (px_to_m > 0.0f) ? (drop_m / px_to_m) : 0.0f;
+
+    // 6. Son düzeltme: lead + drop
+    aim.corrected.x = lead_point.x;
+    aim.corrected.y = lead_point.y + drop_px; // Y ekseninde aşağıya düzelt
+
+    // 7. Frame sınırlarına kırp
     aim.corrected = clampToFrame(aim.corrected, frame_size);
-
+    aim.distance_m = distance;
+    aim.correction.dx_px = aim.corrected.x - balloon.center.x;
+    aim.correction.dy_px = aim.corrected.y - balloon.center.y;
+    aim.correction.lead_m = std::sqrt(lead_x * lead_x + lead_y * lead_y);
+    aim.correction.drop_m = drop_m;
     aim.valid = true;
 
-    SANCAK_LOG_TRACE("Aim: raw=({:.0f},{:.0f}) → corr=({:.0f},{:.0f}) | "
-                     "dist={:.1f}m | dx={:.1f} dy={:.1f}",
-                     aim.raw_center.x, aim.raw_center.y,
-                     aim.corrected.x, aim.corrected.y,
-                     aim.distance_m,
-                     aim.correction.dx_px, aim.correction.dy_px);
+    SANCAK_LOG_INFO("Lead Prediction: ToF={:.3f}s | Lead=({:.2f},{:.2f})m | Drop={:.2f}m | LeadPt=({:.1f},{:.1f})",
+        t_total, lead_x, lead_y, drop_m, aim.corrected.x, aim.corrected.y);
 
     return aim;
 }

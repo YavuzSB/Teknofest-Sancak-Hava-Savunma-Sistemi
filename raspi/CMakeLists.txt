@@ -147,7 +147,6 @@ add_library(sancak_build_options INTERFACE)
 target_compile_features(sancak_build_options INTERFACE cxx_std_17)
 target_include_directories(sancak_build_options INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/../protocol
 )
 
 if(SANCAK_ENABLE_WARNINGS)
